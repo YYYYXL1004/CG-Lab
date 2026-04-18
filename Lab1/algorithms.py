@@ -103,7 +103,6 @@ def midpoint_circle(xc, yc, r, print_log=False):
         print("-" * 52)
 
     def add_eight(cx, cy, x, y):
-        """八对称: 一个点映射出圆上的8个点"""
         points.extend([
             (cx+x, cy+y), (cx-x, cy+y),
             (cx+x, cy-y), (cx-x, cy-y),
@@ -130,7 +129,7 @@ def midpoint_circle(xc, yc, r, print_log=False):
         x += 1
         add_eight(xc, yc, x, y)
 
-    # 去重但保留顺序（对称点会重复）
+    # 去重但保留顺序（一些边界点对称点会重复）
     seen = set()
     unique = []
     for p in points:
@@ -179,7 +178,6 @@ def midpoint_ellipse(xc, yc, rx, ry, print_log=False):
         print("-" * 58)
 
     def add_four(cx, cy, x, y):
-        """四对称: 一个点映射出椭圆上的4个点"""
         points.extend([
             (cx+x, cy+y), (cx-x, cy+y),
             (cx+x, cy-y), (cx-x, cy-y),
@@ -195,9 +193,9 @@ def midpoint_ellipse(xc, yc, rx, ry, print_log=False):
                 strategy = "d1>=0: 选 (x+1, y-1)"
             print(f"| ({x:>3},{y:>3})     | {d1:^10.1f} | {strategy:^26} |")
 
-        if d1 < 0:
+        if d1 < 0:  # 中点在椭圆内，选 (x+1, y)，d 更新只加 ry²·(2x+3)
             d1 += ry2 * (2 * x + 3)
-        else:
+        else:       # 中点在椭圆外，选 (x+1, y-1)，d 更新加 ry²·(2x+3) + rx²·(-2y+2)
             d1 += ry2 * (2 * x + 3) + rx2 * (-2 * y + 2)
             y -= 1
 
@@ -220,9 +218,9 @@ def midpoint_ellipse(xc, yc, rx, ry, print_log=False):
                 strategy = "d2<=0: 选 (x+1, y-1)"
             print(f"| ({x:>3},{y:>3})     | {d2:^10.1f} | {strategy:^26} |")
 
-        if d2 > 0:
+        if d2 > 0:   # 中点在椭圆内，选 (x, y-1)，d 更新只加 rx²·(-2y+3)
             d2 += rx2 * (-2 * y + 3)
-        else:
+        else:        # 中点在椭圆外，选 (x+1, y-1)，d 更新加 ry²·(2x+2) + rx²·(-2y+3)
             d2 += ry2 * (2 * x + 2) + rx2 * (-2 * y + 3)
             x += 1
 

@@ -14,10 +14,6 @@
 """
 
 
-# ============================================================
-#  辅助函数
-# ============================================================
-
 def midpoint_line(x0, y0, x1, y1):
     """中点画线法 — 将两点之间的直线离散为像素点列表"""
     points = []
@@ -110,10 +106,6 @@ def point_in_polygon(px, py, vertices):
     return inside
 
 
-# ============================================================
-#  扫描线种子填充
-# ============================================================
-
 def scanline_seed_fill(vertices, seed, print_log=False):
     """
     扫描线种子填充算法（非递归，基于栈）
@@ -133,7 +125,7 @@ def scanline_seed_fill(vertices, seed, print_log=False):
     fill_order = []      # 填充顺序记录（用于动画）
     stack = [seed]       # 种子栈
 
-    # 包围盒，用于快速排除明显在外面的点
+    # 用于快速排除明显在外面的点
     min_x = min(v[0] for v in vertices)
     max_x = max(v[0] for v in vertices)
     min_y = min(v[1] for v in vertices)
