@@ -143,7 +143,7 @@ def cohen_sutherland_clip(x0, y0, x1, y1, xmin, ymin, xmax, ymax, print_log=Fals
         dx = x1 - x0
         dy = y1 - y0
 
-        if code_out & TOP:
+        if code_out & TOP:  # 越过了上边界 (y < ymin)
             x = x0 + dx * (ymin - y0) / dy
             y = ymin
             edge = "上边(TOP)"

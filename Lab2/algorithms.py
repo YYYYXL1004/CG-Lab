@@ -1,19 +1,3 @@
-"""
-扫描线种子填充算法
-核心思想：
-    给定一个多边形和其内部的一个种子点，用"扫描线"的方式逐行填满整个多边形。
-    与简单的递归洪水填充（Flood Fill）不同，扫描线种子填充不是一个像素一个像素地递归，
-    而是每次处理一整行（扫描线），大幅减少栈深度和重复访问。
-
-算法步骤：
-    1. 从种子点出发，沿当前扫描线向左、向右扩展，找到这一行能填的最大区间 [left, right]
-    2. 把 [left, right] 整段填上色
-    3. 检查上下相邻两行：在 [left, right] 范围内，找到所有"连续可填"的小段，
-       每段取一个点作为新种子压入栈
-    4. 从栈中弹出下一个种子，重复步骤 1-3，直到栈空
-"""
-
-
 def midpoint_line(x0, y0, x1, y1):
     """中点画线法 — 将两点之间的直线离散为像素点列表"""
     points = []
@@ -131,14 +115,21 @@ def scanline_seed_fill(vertices, seed, print_log=False):
     min_y = min(v[1] for v in vertices)
     max_y = max(v[1] for v in vertices)
 
+    # 临时补丁开关：关闭逐像素射线法，避免斜边附近出现“白缝”
+    # 如需恢复旧行为，把 False 改为 True。
+    use_center_ray_test = False
+
     def can_fill(x, y):
         """判断像素 (x, y) 是否可以被填充"""
         if x < min_x or x > max_x or y < min_y or y > max_y:
             return False
         if (x, y) in boundary or (x, y) in filled:
             return False
-        # 用像素中心 (x+0.5, y+0.5) 做内部判断，比整数坐标更准确
-        return point_in_polygon(x + 0.5, y + 0.5, vertices)
+        if use_center_ray_test:
+            # 旧实现（保留）：用像素中心 (x+0.5, y+0.5) 做射线法内部判断
+            return point_in_polygon(x + 0.5, y + 0.5, vertices)
+        # 临时策略：只依赖边界阻挡 + 包围盒限制，避免边缘误判漏填
+        return True
 
     # 验证种子点
     sx, sy = seed
