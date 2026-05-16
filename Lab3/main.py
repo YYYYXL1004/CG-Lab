@@ -1,6 +1,6 @@
 import sys
 import pygame
-from algorithms import midpoint_line, cohen_sutherland_clip
+from algorithms import midpoint_line, cohen_sutherland_clip, split_points_by_clip_rect
 
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
@@ -171,11 +171,11 @@ def main():
         for lx0, ly0, lx1, ly1, accept, cx0, cy0, cx1, cy1 in lines:
             # 原始直线 — 红色虚线（窗口外部分）
             orig_pts = midpoint_line(lx0, ly0, lx1, ly1)
-            draw_dashed_pixels(screen, orig_pts, OUTSIDE_COLOR)
+            outside_pts, inside_pts = split_points_by_clip_rect(orig_pts, clip_rect)
+            draw_dashed_pixels(screen, outside_pts, OUTSIDE_COLOR)
             # 裁剪后 — 绿色实线（窗口内部分）
             if accept:
-                clip_pts = midpoint_line(cx0, cy0, cx1, cy1)
-                draw_pixels(screen, clip_pts, INSIDE_COLOR)
+                draw_pixels(screen, inside_pts, INSIDE_COLOR)
 
         # LINE 模式的直线预览（橡皮筋）
         if mode == "LINE" and line_start:

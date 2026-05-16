@@ -84,6 +84,19 @@ def compute_code(x, y, xmin, ymin, xmax, ymax):
     return code
 
 
+def split_points_by_clip_rect(points, clip_rect):
+    """Split rasterized line points into outside and inside parts of a clip rect."""
+    xmin, ymin, xmax, ymax = clip_rect
+    outside = []
+    inside = []
+    for x, y in points:
+        if xmin <= x <= xmax and ymin <= y <= ymax:
+            inside.append((x, y))
+        else:
+            outside.append((x, y))
+    return outside, inside
+
+
 def _code_label(code):
     """将区域编码转为可读标签"""
     if code == INSIDE:

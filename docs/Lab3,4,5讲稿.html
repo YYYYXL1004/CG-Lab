@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>计算机图形学 Lab3、Lab4、Lab5 讲解复习页</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #1c2530;
+      --muted: #637083;
+      --line: #d9dee7;
+      --nav: #252a33;
+      --nav-ink: #f5f7fa;
+      --teal: #087f8c;
+      --green: #208a5d;
+      --amber: #b56a00;
+      --red: #bf3f3f;
+      --blue: #2f67b1;
+      --code-bg: #f0f3f7;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 24px 18px;
+      color: var(--nav-ink);
+      background: var(--nav);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .brand {
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+    }
+
+    .brand .title {
+      display: block;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .brand .sub {
+      display: block;
+      margin-top: 8px;
+      color: #b9c2cf;
+      font-size: 13px;
+    }
+
+    .nav-group {
+      margin: 18px 0;
+    }
+
+    .nav-label {
+      margin: 0 0 8px;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .nav-link {
+      display: block;
+      margin: 4px 0;
+      padding: 8px 10px;
+      color: #e8edf3;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .nav-link:hover,
+    .nav-link:focus {
+      background: rgba(255, 255, 255, 0.1);
+      outline: none;
+    }
+
+    .content {
+      max-width: 1120px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 34px 34px 72px;
+    }
+
+    .hero {
+      padding: 28px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.28;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 32px;
+    }
+
+    h2 {
+      margin: 42px 0 18px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid var(--line);
+      font-size: 26px;
+    }
+
+    h3 {
+      margin: 28px 0 12px;
+      font-size: 19px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0 10px 24px;
+      padding: 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      background: var(--code-bg);
+      border-radius: 5px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      line-height: 1.55;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      border-radius: 0;
+      font-size: 14px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 20px 0 0;
+    }
+
+    .quick-card,
+    .panel,
+    .note,
+    .example,
+    .script {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .quick-card {
+      padding: 18px;
+    }
+
+    .quick-card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 17px;
+    }
+
+    .quick-card span {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 3px 8px;
+      color: #fff;
+      background: var(--teal);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .section {
+      margin-top: 22px;
+      padding: 22px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .section h3:first-child {
+      margin-top: 0;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .tag {
+      padding: 4px 9px;
+      color: #fff;
+      background: var(--blue);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tag.green {
+      background: var(--green);
+    }
+
+    .tag.amber {
+      background: var(--amber);
+    }
+
+    .tag.red {
+      background: var(--red);
+    }
+
+    .note,
+    .example,
+    .script {
+      margin: 16px 0;
+      padding: 15px 17px;
+    }
+
+    .note {
+      border-left: 5px solid var(--teal);
+    }
+
+    .example {
+      border-left: 5px solid var(--amber);
+    }
+
+    .script {
+      border-left: 5px solid var(--green);
+      background: #f7fbf8;
+    }
+
+    .quote-title,
+    .example-title,
+    .script-title {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(92px, 1fr));
+      gap: 6px;
+      margin: 14px 0;
+      max-width: 520px;
+    }
+
+    .cell {
+      padding: 9px 8px;
+      text-align: center;
+      background: #eef2f6;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 14px;
+    }
+
+    .cell.center {
+      color: #fff;
+      background: var(--green);
+      border-color: var(--green);
+      font-weight: 700;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .pipe-step {
+      min-height: 86px;
+      padding: 12px;
+      background: #f4f7fb;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .pipe-step strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--teal);
+    }
+
+    details {
+      margin: 12px 0;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 13px 16px;
+      font-weight: 700;
+    }
+
+    details[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .details-body {
+      padding: 0 16px 14px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      background: var(--paper);
+    }
+
+    th,
+    td {
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef2f6;
+      font-weight: 700;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .check {
+      padding: 12px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font-size: 14px;
+    }
+
+    .top-link {
+      display: inline-block;
+      margin-top: 18px;
+      color: var(--teal);
+      font-weight: 700;
+    }
+
+    @media (max-width: 920px) {
+      .layout {
+        display: block;
+      }
+
+      .sidebar {
+        position: relative;
+        height: auto;
+      }
+
+      .content {
+        padding: 22px 16px 54px;
+      }
+
+      .grid-3,
+      .two-col,
+      .pipeline,
+      .checklist {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .content {
+        max-width: none;
+        padding: 0;
+      }
+
+      .section,
+      .hero,
+      .quick-card,
+      .note,
+      .example,
+      .script,
+      details {
+        break-inside: avoid;
+      }
+
+      details:not([open]) .details-body {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout" id="top">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="title">图形学 Lab3-5 讲解复习页</span>
+        <span class="sub">按课堂讲解顺序整理，适合演示前快速过一遍。</span>
+      </div>
+
+      <nav aria-label="页面目录">
+        <div class="nav-group">
+          <p class="nav-label">总览</p>
+          <a class="nav-link" href="#summary">三句话总览</a>
+          <a class="nav-link" href="#opening">开场讲法</a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Lab3</p>
+          <a class="nav-link" href="#lab3">直线段裁剪</a>
+          <a class="nav-link" href="#lab3-demo">Lab3 演示流程</a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Lab4</p>
+          <a class="nav-link" href="#lab4">Bezier 曲线</a>
+          <a class="nav-link" href="#lab4-demo">Lab4 演示流程</a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Lab5</p>
+          <a class="nav-link" href="#lab5">三维渲染流程</a>
+          <a class="nav-link" href="#lab5-demo">Lab5 演示流程</a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">收尾</p>
+          <a class="nav-link" href="#questions">高频追问</a>
+          <a class="nav-link" href="#checklist">演示前检查</a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <header class="hero">
+        <h1>计算机图形学 Lab3、Lab4、Lab5 讲解复习页</h1>
+        <p>这份 HTML 是从讲稿整理出来的学习版。长段文字被拆成了摘要、例子、代码对应、演示步骤和追问答案。复习时先看每个 Lab 的“核心讲法”，不清楚的地方再展开细节。</p>
+        <div class="tag-row">
+          <span class="tag">Lab3 裁剪</span>
+          <span class="tag green">Lab4 曲线</span>
+          <span class="tag amber">Lab5 三维</span>
+          <span class="tag red">演示答辩</span>
+        </div>
+      </header>
+
+      <section id="summary">
+        <h2>三句话总览</h2>
+        <div class="grid-3">
+          <article class="quick-card">
+            <strong>Lab3：判断线段哪里可见</strong>
+            <p>用 Cohen-Sutherland 区域编码判断直线段与裁剪窗口的关系，只保留窗口内部那段。</p>
+            <span>关键词：区域编码、简取、简弃、求交</span>
+          </article>
+          <article class="quick-card">
+            <strong>Lab4：用控制点生成平滑曲线</strong>
+            <p>用 De Casteljau 递推算法从控制点生成 Bezier 曲线，并支持平移和旋转。</p>
+            <span>关键词：控制点、插值、采样、质心旋转</span>
+          </article>
+          <article class="quick-card">
+            <strong>Lab5：把三维模型变成二维画面</strong>
+            <p>从顶点和三角面出发，完成观察变换、透视投影、光栅化、Z-buffer 和光照。</p>
+            <span>关键词：投影、消隐、三角形、Phong 光照</span>
+          </article>
+        </div>
+      </section>
+
+      <section id="opening" class="section">
+        <h2>开场讲法</h2>
+        <div class="script">
+          <span class="script-title">可以直接这样说</span>
+          <p>老师好，我这次主要演示 Lab3、Lab4、Lab5。Lab3 是二维直线裁剪，解决的是一条线段在窗口里哪些部分可见的问题。Lab4 是 Bezier 曲线绘制和变换，通过控制点生成平滑曲线，并支持平移、旋转。Lab5 是三维显示，从三维模型出发，经过观察变换、透视投影、消隐和光照，最后显示成屏幕像素。</p>
+          <p>代码结构上，每个 Lab 都分成两个部分：`algorithms.py` 主要放算法计算，`main.py` 主要负责 pygame 窗口、鼠标键盘交互和显示。</p>
+        </div>
+      </section>
+
+      <section id="lab3">
+        <h2>Lab3：Cohen-Sutherland 直线段裁剪</h2>
+
+        <div class="section">
+          <h3>1. 这个实验解决什么问题</h3>
+          <p>屏幕上有一个矩形裁剪窗口，一条线段可能完全在窗口里，也可能完全在窗口外，也可能一部分在里面、一部分在外面。裁剪算法要做的是只保留窗口里可见的部分。</p>
+          <div class="note">
+            <span class="quote-title">课堂讲法</span>
+            <p>红色虚线只表示原始线段在窗口外的部分，绿色实线表示窗口内保留下来的可见部分。程序不是靠肉眼判断，而是先用端点区域编码算出裁剪结果，再在显示层把原始光栅化点按窗口内外分类，避免窗口内残留红色。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>2. 核心算法：区域编码</h3>
+          <p>把裁剪窗口四条边向外延长，平面会被分成 9 个区域。每个点用 4 位二进制表示它相对于窗口的位置。</p>
+          <div class="matrix" aria-label="Cohen-Sutherland 区域编码示意">
+            <div class="cell">左上<br>1001</div>
+            <div class="cell">上<br>1000</div>
+            <div class="cell">右上<br>1010</div>
+            <div class="cell">左<br>0001</div>
+            <div class="cell center">内部<br>0000</div>
+            <div class="cell">右<br>0010</div>
+            <div class="cell">左下<br>0101</div>
+            <div class="cell">下<br>0100</div>
+            <div class="cell">右下<br>0110</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>端点编码情况</th>
+                <th>算法判断</th>
+                <th>怎么讲</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>两个端点都是 <code>0000</code></td>
+                <td>简取</td>
+                <td>整条线在窗口内，直接保留。</td>
+              </tr>
+              <tr>
+                <td>两个端点编码按位与不为 0</td>
+                <td>简弃</td>
+                <td>两个端点在窗口同一侧外面，线段不可能穿过窗口。</td>
+              </tr>
+              <tr>
+                <td>其他情况</td>
+                <td>裁剪</td>
+                <td>找一个在外面的端点，求它和窗口边界的交点，替换端点后继续判断。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="section">
+          <h3>3. 手算例子</h3>
+          <div class="example">
+            <span class="example-title">窗口：x 从 20 到 60，y 从 15 到 40；线段：P0=(10,20)，P1=(50,35)</span>
+            <p>P0 的 x=10 小于 xmin=20，所以 P0 在窗口左侧，编码是 <code>0001</code>。P1 在窗口范围内，编码是 <code>0000</code>。不能简取，也不能简弃，所以要求交点。</p>
+            <pre><code>dx = 50 - 10 = 40
+dy = 35 - 20 = 15
+
+左边界 x = 20
+比例 = (20 - 10) / 40 = 0.25
+y = 20 + 0.25 * 15 = 23.75</code></pre>
+            <p>所以 P0 被替换成 <code>(20, 23.75)</code>，新的线段两端都在窗口内，算法接受裁剪后的线段。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>4. 代码对应</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>函数或模块</th>
+                <th>讲解重点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Lab3/algorithms.py</code></td>
+                <td><code>compute_code()</code></td>
+                <td>根据 x、y 和窗口边界生成 4 位区域编码。</td>
+              </tr>
+              <tr>
+                <td><code>Lab3/algorithms.py</code></td>
+                <td><code>cohen_sutherland_clip()</code></td>
+                <td>循环执行简取、简弃和交点替换。</td>
+              </tr>
+              <tr>
+                <td><code>Lab3/algorithms.py</code></td>
+                <td><code>midpoint_line()</code></td>
+                <td>把原始线段离散成像素点，为显示层分类提供同一批栅格点。</td>
+              </tr>
+              <tr>
+                <td><code>Lab3/algorithms.py</code></td>
+                <td><code>split_points_by_clip_rect()</code></td>
+                <td>把原始线段像素点按裁剪窗口分成窗口外点和窗口内点。</td>
+              </tr>
+              <tr>
+                <td><code>Lab3/main.py</code></td>
+                <td>交互和绘制</td>
+                <td>先画裁剪窗口，再把原始线段像素点分类绘制：窗口外用红色虚线，窗口内用绿色实线。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="section" id="lab3-demo">
+          <h3>5. 演示流程</h3>
+          <ol>
+            <li>运行 <code>python Lab3/main.py</code>。</li>
+            <li>鼠标点两个角，画出裁剪窗口。</li>
+            <li>画一条完全在窗口内的线，说明这是简取。</li>
+            <li>画一条完全在窗口外同一侧的线，说明这是简弃。</li>
+            <li>画一条穿过窗口的线，重点展示窗口外红色虚线和窗口内绿色实线。</li>
+            <li>看控制台输出，指出每一步的编码、交点和结果。</li>
+          </ol>
+          <div class="script">
+            <span class="script-title">演示时可以这样说</span>
+            <p>我现在画的这条线左端在窗口外、右端在窗口内，所以它不能直接接受，也不能直接丢弃。程序会先找到外面的端点，再根据它的编码决定和哪条边求交。求完交点后替换端点，重新编码，直到最后两端都变成内部点。显示时不会先画整条红线再用绿线覆盖，而是把原始线段离散出的同一批像素点按窗口内外分开画，所以窗口里面不会再出现红色残留。</p>
+          </div>
+        </div>
+
+        <a class="top-link" href="#top">回到顶部</a>
+      </section>
+
+      <section id="lab4">
+        <h2>Lab4：Bezier 曲线绘制与变换</h2>
+
+        <div class="section">
+          <h3>1. 这个实验解决什么问题</h3>
+          <p>用户不需要直接给出曲线上的所有点，只需要给几个控制点，程序就能生成一条平滑曲线。控制点像拉住曲线的手柄，会影响曲线形状，但曲线不一定经过每个控制点。</p>
+          <div class="note">
+            <span class="quote-title">课堂讲法</span>
+            <p>红色点是控制点，灰色线是控制多边形，蓝色像素是最终生成的 Bezier 曲线。拖动控制点时，曲线实时变化，这能直观看到控制点对曲线的影响。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>2. 核心算法：De Casteljau 递推</h3>
+          <p>De Casteljau 的核心就是反复做线性插值。给定参数 <code>t</code>，在相邻点之间按比例取点，一层一层递推到只剩一个点，这个点就是曲线在该 t 上的位置。</p>
+          <pre><code>P_i^(0) = 原始控制点
+P_i^(r) = (1 - t) * P_i^(r-1) + t * P_{i+1}^(r-1)</code></pre>
+          <div class="pipeline">
+            <div class="pipe-step">
+              <strong>原始控制点</strong>
+              <span>P0、P1、P2、P3</span>
+            </div>
+            <div class="pipe-step">
+              <strong>第一层插值</strong>
+              <span>在相邻控制点之间按 t 取点</span>
+            </div>
+            <div class="pipe-step">
+              <strong>继续递推</strong>
+              <span>新点之间继续插值</span>
+            </div>
+            <div class="pipe-step">
+              <strong>最后一个点</strong>
+              <span>就是曲线上的采样点</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>3. 手算例子</h3>
+          <div class="example">
+            <span class="example-title">控制点 P0=(0,0)，P1=(4,4)，P2=(8,0)，取 t=0.5</span>
+            <pre><code>第一层：
+A = P0 和 P1 的中点 = (2, 2)
+B = P1 和 P2 的中点 = (6, 2)
+
+第二层：
+C = A 和 B 的中点 = (4, 2)</code></pre>
+            <p>所以 Bezier 曲线在 <code>t=0.5</code> 处的点就是 <code>(4, 2)</code>。</p>
+          </div>
+          <div class="note">
+            <span class="quote-title">一句话解释</span>
+            <p>De Casteljau 不是直接展开复杂多项式，而是反复做“按比例取点”，所以几何意义直观，也比较稳定。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>4. 曲线绘制、平移和旋转</h3>
+          <div class="two-col">
+            <div>
+              <h3>曲线怎么画出来</h3>
+              <p><code>de_casteljau()</code> 只能算某一个 t 对应的点。要画整条曲线，代码把 t 从 0 到 1 分成 300 步，每个 t 算一个点，再把这些点四舍五入成像素。</p>
+              <pre><code>t = 0/300, 1/300, 2/300, ..., 300/300</code></pre>
+            </div>
+            <div>
+              <h3>变换怎么做</h3>
+              <p>平移就是每个控制点都加同样的 <code>dx, dy</code>。旋转是绕控制点质心旋转，质心就是所有控制点坐标的平均值。界面中的绿色十字就是旋转中心。</p>
+              <pre><code>x' = x + dx
+y' = y + dy
+
+cx = 所有 x 的平均值
+cy = 所有 y 的平均值</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>5. 代码对应</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>函数或模块</th>
+                <th>讲解重点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Lab4/algorithms.py</code></td>
+                <td><code>de_casteljau()</code></td>
+                <td>对一个 t 做递推，得到曲线点。</td>
+              </tr>
+              <tr>
+                <td><code>Lab4/algorithms.py</code></td>
+                <td><code>bezier_curve()</code>、<code>bezier_curve_pixels()</code></td>
+                <td>对 t 采样，生成曲线像素。</td>
+              </tr>
+              <tr>
+                <td><code>Lab4/algorithms.py</code></td>
+                <td><code>translate_points()</code>、<code>rotate_points()</code>、<code>centroid()</code></td>
+                <td>实现平移、绕质心旋转和旋转中心计算。</td>
+              </tr>
+              <tr>
+                <td><code>Lab4/main.py</code></td>
+                <td>交互和左侧面板</td>
+                <td>加点、拖动、删点、平移、旋转，并显示阶数、坐标、质心和递推信息。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="section" id="lab4-demo">
+          <h3>6. 演示流程</h3>
+          <ol>
+            <li>运行 <code>python Lab4/main.py</code>。</li>
+            <li>先点 3 个控制点，说明 3 个点对应二阶 Bezier 曲线。</li>
+            <li>再点第 4 个点，说明 n 个控制点对应 n-1 阶曲线。</li>
+            <li>拖动一个控制点，观察蓝色曲线实时变化。</li>
+            <li>按 D，展示控制台里的 <code>t=0.5</code> 递推过程。</li>
+            <li>按方向键，让整条曲线平移。</li>
+            <li>按 Q/E，让曲线绕绿色质心旋转。</li>
+            <li>指一下左侧面板，说明它实时显示算法数据。</li>
+          </ol>
+          <div class="script">
+            <span class="script-title">演示时可以这样说</span>
+            <p>现在我添加了 4 个控制点，所以这是 3 阶 Bezier 曲线。蓝色曲线不是简单把控制点连起来，而是对参数 t 从 0 到 1 采样，每次用 De Casteljau 递推算出一个曲线点。这里按 D 可以看到 t=0.5 时每一层插值的结果。</p>
+          </div>
+        </div>
+
+        <a class="top-link" href="#top">回到顶部</a>
+      </section>
+
+      <section id="lab5">
+        <h2>Lab5：三维形体、观察变换、消隐与光照</h2>
+
+        <div class="section">
+          <h3>1. 这个实验解决什么问题</h3>
+          <p>Lab5 从二维图形扩展到三维显示。程序构造了一个带墙体、屋顶和烟囱的小建筑模型，并实现物体旋转、摄像机漫游、透视投影、背面剔除、Z-buffer 消隐和简单 Phong 光照。</p>
+          <div class="note">
+            <span class="quote-title">课堂讲法</span>
+            <p>Lab5 的重点不是用 pygame 直接画三维图形，而是自己完成三维渲染管线中的几个核心步骤。pygame 主要负责开窗口和把我算出来的像素显示出来。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>2. 模型怎么表示</h3>
+          <p>三维模型在代码里用“顶点 + 三角面”表示。顶点是 <code>(x, y, z)</code>，面用三个顶点索引表示，比如 <code>(0, 1, 2)</code> 表示一个三角形。</p>
+          <p>一个四边形会拆成两个三角形，因为三角形一定共面，计算光栅化、法向量和深度插值更稳定。</p>
+          <pre><code>顶点：(-1.6, -1.0, -1.1)
+三角面：(0, 1, 2)
+四边形：拆成 (a, b, c) 和 (a, c, d)</code></pre>
+        </div>
+
+        <div class="section">
+          <h3>3. 三维渲染主流程</h3>
+          <div class="pipeline">
+            <div class="pipe-step">
+              <strong>模型顶点</strong>
+              <span>小建筑的墙、屋顶和烟囱都由顶点和三角面组成。</span>
+            </div>
+            <div class="pipe-step">
+              <strong>变换和投影</strong>
+              <span>物体旋转，转到摄像机坐标，再透视投影到屏幕。</span>
+            </div>
+            <div class="pipe-step">
+              <strong>剔除和光照</strong>
+              <span>背面剔除减少不可见面，Phong 光照计算顶点颜色。</span>
+            </div>
+            <div class="pipe-step">
+              <strong>光栅化和消隐</strong>
+              <span>三角形转成像素，用 Z-buffer 保留最近颜色。</span>
+            </div>
+          </div>
+          <pre><code>模型顶点
+  -> 物体旋转和平移
+  -> 转到摄像机坐标系
+  -> 透视投影到屏幕
+  -> 背面剔除
+  -> 光照计算
+  -> 三角形光栅化
+  -> Z-buffer 消隐
+  -> 显示像素</code></pre>
+        </div>
+
+        <div class="section">
+          <h3>4. 摄像机和透视投影</h3>
+          <p>摄像机用 <code>position</code>、<code>yaw</code> 和 <code>pitch</code> 表示。根据 yaw 和 pitch 可以算出 <code>forward</code>、<code>right</code>、<code>up</code> 三个方向向量。世界坐标点减去摄像机位置后，再和这三个方向做点积，就变成摄像机坐标。</p>
+          <pre><code>screen_x = width / 2 + focal * x / z
+screen_y = height / 2 - focal * y / z</code></pre>
+          <div class="example">
+            <span class="example-title">投影例子</span>
+            <p>画布宽 580，高 520，焦距 430。一个点在摄像机坐标中是 <code>(1, 0.5, 5)</code>。</p>
+            <pre><code>screen_x = 580/2 + 430*1/5 = 376
+screen_y = 520/2 - 430*0.5/5 = 217</code></pre>
+            <p>所以这个点会显示在屏幕坐标大约 <code>(376, 217)</code>。如果 z 变大，点会更靠近屏幕中心，这就是近大远小。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>5. 背面剔除、Z-buffer 和光照</h3>
+          <div class="two-col">
+            <div>
+              <h3>背面剔除</h3>
+              <p>通过叉乘计算三角形法向量，再判断这个面是否朝向摄像机。背对摄像机的面直接跳过。</p>
+              <pre><code>normal = (B - A) × (C - A)</code></pre>
+            </div>
+            <div>
+              <h3>Z-buffer 消隐</h3>
+              <p>每个屏幕像素保存一个深度。新的三角形像素只有在更靠近摄像机时，才会更新颜色。</p>
+              <pre><code>如果 new_z < old_z:
+    更新颜色和深度
+否则:
+    不画这个像素</code></pre>
+            </div>
+          </div>
+          <div class="example">
+            <span class="example-title">Z-buffer 例子</span>
+            <p>同一个屏幕像素上，三角形 A 的 z=5，三角形 B 的 z=2。因为 2 更小，B 更近，所以最后显示 B 的颜色。不管 A 和 B 谁先画，结果都应该保留最近的面。</p>
+          </div>
+          <div class="note">
+            <span class="quote-title">Phong 光照一句话</span>
+            <p>环境光负责“看得见”，漫反射负责“面朝光源更亮”，高光负责“有一点反光质感”。代码按顶点算颜色，再在三角形内部插值，所以会有明暗过渡。</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>6. 三角形光栅化</h3>
+          <p>Lab5 没有直接调用 pygame 的多边形填充，而是自己判断像素是否在三角形内部。核心是边函数：如果一个像素中心点在三角形三条边的同一侧，它就在三角形内部。</p>
+          <p>光栅化时还会用重心坐标插值 z 深度和三个顶点的颜色。z 深度用于 Z-buffer，颜色插值用于让三角形内部有自然过渡。</p>
+        </div>
+
+        <div class="section">
+          <h3>7. 代码对应</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>函数或模块</th>
+                <th>讲解重点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Lab5/algorithms.py</code></td>
+                <td><code>Camera</code>、<code>camera_basis()</code>、<code>world_to_camera()</code></td>
+                <td>摄像机状态、观察方向和坐标转换。</td>
+              </tr>
+              <tr>
+                <td><code>Lab5/algorithms.py</code></td>
+                <td><code>project_point()</code></td>
+                <td>透视投影，把三维点映射到屏幕。</td>
+              </tr>
+              <tr>
+                <td><code>Lab5/algorithms.py</code></td>
+                <td><code>build_house_model()</code></td>
+                <td>构造小建筑模型的顶点和三角面。</td>
+              </tr>
+              <tr>
+                <td><code>Lab5/algorithms.py</code></td>
+                <td><code>triangle_normal()</code>、<code>vertex_normals()</code>、<code>phong_color()</code></td>
+                <td>法向量和光照颜色计算。</td>
+              </tr>
+              <tr>
+                <td><code>Lab5/algorithms.py</code></td>
+                <td><code>rasterize_triangle_into()</code>、<code>render_model()</code></td>
+                <td>三角形光栅化、深度测试和完整渲染流程。</td>
+              </tr>
+              <tr>
+                <td><code>Lab5/main.py</code></td>
+                <td>交互和面板</td>
+                <td>左键旋转物体，右键旋转视角，W/S/A/D/Q/E 漫游，空格自动旋转。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="section" id="lab5-demo">
+          <h3>8. 演示流程</h3>
+          <ol>
+            <li>运行 <code>python Lab5/main.py</code>。</li>
+            <li>先说明模型是一个小建筑，由顶点和三角面组成。</li>
+            <li>左键拖动物体，展示模型旋转。</li>
+            <li>右键拖动或按方向键，展示摄像机视角变化。</li>
+            <li>按 W/S/A/D/Q/E，展示观察点可以漫游。</li>
+            <li>按空格开启自动旋转，观察左侧面板中的角度和可见三角面数变化。</li>
+            <li>指出前面的面会遮住后面的面，这是 Z-buffer 在起作用。</li>
+            <li>指出不同面有明暗变化，这是光照和法向量在起作用。</li>
+          </ol>
+          <div class="script">
+            <span class="script-title">演示时可以这样说</span>
+            <p>现在物体转动时，后面的面不会错误地盖到前面来，因为每个像素都有一个深度缓存。程序在画每个三角形像素时都会比较 z 值，只保留最近的颜色。</p>
+          </div>
+        </div>
+
+        <a class="top-link" href="#top">回到顶部</a>
+      </section>
+
+      <section id="questions">
+        <h2>高频追问速查</h2>
+
+        <details open>
+          <summary>Lab3 可能怎么问</summary>
+          <div class="details-body">
+            <p><strong>为什么编码按位与不为 0 就能丢弃？</strong></p>
+            <p>因为按位与不为 0 说明两个端点至少在窗口同一侧。比如两个点都在窗口左边，它们的编码都含有 LEFT 位，这条线段整体就在左侧，不可能穿过窗口。</p>
+            <p><strong>Cohen-Sutherland 和中点画线法分别负责什么？</strong></p>
+            <p>Cohen-Sutherland 负责算裁剪后的两个端点；中点画线法负责把这两个端点之间的线段离散成屏幕像素。</p>
+            <p><strong>为什么现在窗口内不会残留红色？</strong></p>
+            <p>之前如果先把整条原始线段画成红色，再重新用裁剪后的端点画绿色，两个线段的离散像素可能因为取整和斜率不同而没有完全重合。现在程序先对原始线段调用 <code>midpoint_line()</code> 得到同一批像素点，再用 <code>split_points_by_clip_rect()</code> 按窗口范围分类：窗口外点画红色虚线，窗口内点画绿色实线，因此不会依赖覆盖效果。</p>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Lab4 可能怎么问</summary>
+          <div class="details-body">
+            <p><strong>Bezier 曲线一定经过所有控制点吗？</strong></p>
+            <p>不一定。它一定经过第一个和最后一个控制点，中间控制点主要负责影响曲线形状。</p>
+            <p><strong>为什么用 De Casteljau？</strong></p>
+            <p>它的几何意义直观，就是反复线性插值；数值上稳定，也天然支持任意阶数。</p>
+            <p><strong>为什么旋转后坐标是小数？</strong></p>
+            <p>旋转涉及 sin 和 cos，结果通常是浮点数。内部保留浮点数，绘制时再四舍五入到像素网格。</p>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Lab5 可能怎么问</summary>
+          <div class="details-body">
+            <p><strong>为什么模型要拆成三角形？</strong></p>
+            <p>三角形一定共面，插值和光栅化简单稳定。复杂多边形通常也会先拆成三角形再渲染。</p>
+            <p><strong>Z-buffer 和背面剔除有什么区别？</strong></p>
+            <p>背面剔除是提前丢掉背对摄像机的面；Z-buffer 是像素级别处理前后遮挡。两个都朝向摄像机的面互相遮挡时，仍然需要 Z-buffer。</p>
+            <p><strong>pygame 在 Lab5 中做了什么？</strong></p>
+            <p>pygame 负责窗口、输入事件和最终像素显示。投影、光栅化、深度测试和光照颜色都是算法代码自己算的。</p>
+          </div>
+        </details>
+      </section>
+
+      <section id="checklist" class="section">
+        <h2>演示前检查清单</h2>
+        <p>演示前按这个顺序过一遍，能减少现场卡壳。</p>
+        <div class="checklist">
+          <div class="check"><strong>1. 启动 Lab3</strong><br><code>python Lab3/main.py</code></div>
+          <div class="check"><strong>2. 启动 Lab4</strong><br><code>python Lab4/main.py</code></div>
+          <div class="check"><strong>3. 启动 Lab5</strong><br><code>python Lab5/main.py</code></div>
+          <div class="check"><strong>4. 准备三类线</strong><br>Lab3 画内线、外线、穿过窗口的线。</div>
+          <div class="check"><strong>5. 练习操作</strong><br>Lab4 加点、拖动、按 D、平移、旋转；Lab5 旋转、漫游、自动旋转。</div>
+        </div>
+        <div class="script">
+          <span class="script-title">最后总结</span>
+          <p>Lab3 是二维裁剪，重点是用区域编码快速判断线段和裁剪窗口的关系。Lab4 是曲线生成和变换，重点是用 De Casteljau 从控制点生成 Bezier 曲线。Lab5 是三维渲染流程，重点是从三维模型出发，经过观察变换、透视投影、光栅化、Z-buffer 和光照，最后得到屏幕像素。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
