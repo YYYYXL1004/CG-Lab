@@ -10,6 +10,8 @@ import math
 
 
 NEAR_PLANE = 0.1
+LIGHT_POSITION = (2.4, 3.2, 1.2)
+EDGE_COLOR = (35, 45, 55)
 
 
 @dataclass
@@ -213,19 +215,19 @@ def vertex_normals(vertices, triangles):
 
 
 def phong_color(base_color, normal, point, camera_pos,
-                light_pos=(3.0, 5.0, -2.0)):
+                light_pos=LIGHT_POSITION):
     n = normalize(normal)
     l = normalize(sub(light_pos, point))
     v = normalize(sub(camera_pos, point))
+    h = normalize(add(l, v))
     diff = max(0.0, dot(n, l))
-    reflect = normalize(sub(mul(n, 2.0 * dot(n, l)), l))
-    spec = max(0.0, dot(reflect, v)) ** 28
+    spec = max(0.0, dot(n, h)) ** 18 if diff > 0.0 else 0.0
 
     result = []
     for channel in base_color:
-        ambient = 0.22 * channel
-        diffuse = 0.62 * diff * channel
-        specular = 85.0 * spec
+        ambient = 0.10 * channel
+        diffuse = 1.02 * diff * channel
+        specular = 155.0 * spec
         result.append(clamp(ambient + diffuse + specular))
     return tuple(result)
 
@@ -235,17 +237,33 @@ def edge_function(a, b, p):
             (p[1] - a[1]) * (b[0] - a[0]))
 
 
-def render_triangles(triangles, width, height):
+def render_triangles(triangles, width, height, use_z_buffer=True,
+                     render_mode="solid"):
+    if render_mode not in ("solid", "wireframe", "solid_wireframe"):
+        raise ValueError(f"unknown render mode: {render_mode}")
+
     pixels = {}
     z_buffer = [float("inf")] * (width * height)
 
-    for tri in triangles:
-        rasterize_triangle_into(tri, width, height, z_buffer, pixels)
+    if render_mode in ("solid", "solid_wireframe"):
+        for tri in triangles:
+            rasterize_triangle_into(
+                tri, width, height, z_buffer, pixels,
+                use_z_buffer=use_z_buffer)
+
+    if render_mode in ("wireframe", "solid_wireframe"):
+        for tri in triangles:
+            pts = tri["points"]
+            for a, b in ((0, 1), (1, 2), (2, 0)):
+                _rasterize_depth_line(
+                    pts[a], pts[b], EDGE_COLOR, pixels, z_buffer,
+                    width, height, use_z_buffer=use_z_buffer)
 
     return pixels
 
 
-def _rasterize_depth_line(a, b, color, pixels, z_buffer, width, height):
+def _rasterize_depth_line(a, b, color, pixels, z_buffer, width, height,
+                          use_z_buffer=True):
     x0, y0 = int(round(a[0])), int(round(a[1]))
     x1, y1 = int(round(b[0])), int(round(b[1]))
     line = midpoint_line(x0, y0, x1, y1)
@@ -255,16 +273,15 @@ def _rasterize_depth_line(a, b, color, pixels, z_buffer, width, height):
             continue
         t = i / count
         z = a[2] * (1.0 - t) + b[2] * t
-        if z <= z_buffer[y * width + x] + 0.03:
+        if (not use_z_buffer) or z <= z_buffer[y * width + x] + 0.03:
             pixels[(x, y)] = color
 
 
-def render_model(vertices, triangles, camera, width, height, focal):
-    normals = vertex_normals(vertices, triangles)
+def render_model(vertices, triangles, camera, width, height, focal,
+                 light_pos=LIGHT_POSITION, use_z_buffer=True,
+                 render_mode="solid_wireframe"):
     projected = [project_point(p, camera, width, height, focal)
                  for p in vertices]
-    shaded = [phong_color((190, 190, 190), normals[i], p, camera.position)
-              for i, p in enumerate(vertices)]
 
     render_tris = []
     center_hint = model_center(vertices)
@@ -278,7 +295,8 @@ def render_model(vertices, triangles, camera, width, height, focal):
         if dot(face_normal, sub(camera.position, tri_center)) <= 0:
             continue
         tri_colors = [
-            phong_color(tri["color"], normals[i], vertices[i], camera.position)
+            phong_color(tri["color"], face_normal, vertices[i],
+                        camera.position, light_pos)
             for i in idx
         ]
         render_tris.append({
@@ -286,28 +304,15 @@ def render_model(vertices, triangles, camera, width, height, focal):
             "colors": tri_colors,
         })
 
-    pixels = {}
-    z_buffer = [float("inf")] * (width * height)
-    for tri in render_tris:
-        rasterize_triangle_into(tri, width, height, z_buffer, pixels)
+    pixels = render_triangles(
+        render_tris, width, height, use_z_buffer=use_z_buffer,
+        render_mode=render_mode)
 
-    drawn_edges = set()
-    for tri in triangles:
-        ids = tri["indices"]
-        for a, b in ((ids[0], ids[1]), (ids[1], ids[2]), (ids[2], ids[0])):
-            edge = tuple(sorted((a, b)))
-            if edge in drawn_edges:
-                continue
-            drawn_edges.add(edge)
-            if projected[a] is not None and projected[b] is not None:
-                _rasterize_depth_line(projected[a], projected[b],
-                                      (35, 45, 55), pixels, z_buffer,
-                                      width, height)
-
-    return pixels, len(render_tris), len(shaded)
+    return pixels, len(render_tris), len(vertices)
 
 
-def rasterize_triangle_into(tri, width, height, z_buffer, pixels):
+def rasterize_triangle_into(tri, width, height, z_buffer, pixels,
+                            use_z_buffer=True):
     pts = tri["points"]
     colors = tri["colors"]
     min_x = max(0, int(math.floor(min(p[0] for p in pts))))
@@ -346,8 +351,9 @@ def rasterize_triangle_into(tri, width, height, z_buffer, pixels):
                 w2 = e2 * inv_area
                 z = w0 * pts[0][2] + w1 * pts[1][2] + w2 * pts[2][2]
                 idx = base + x
-                if z < z_buffer[idx]:
-                    z_buffer[idx] = z
+                if (not use_z_buffer) or z < z_buffer[idx]:
+                    if use_z_buffer:
+                        z_buffer[idx] = z
                     pixels[(x, y)] = (
                         int(w0 * c0[0] + w1 * c1[0] + w2 * c2[0]),
                         int(w0 * c0[1] + w1 * c1[1] + w2 * c2[1]),
@@ -365,3 +371,107 @@ def rasterize_triangle_with_depth(tri, width, height, z_buffer):
     pixels = {}
     rasterize_triangle_into(tri, width, height, z_buffer, pixels)
     return pixels, z_buffer
+
+
+def _project_segment(camera, width, height, focal, a, b, color, kind,
+                     width_px=1):
+    pa = project_point(a, camera, width, height, focal)
+    pb = project_point(b, camera, width, height, focal)
+    if pa is None or pb is None:
+        return None
+    return {
+        "a": (pa[0], pa[1], pa[2]),
+        "b": (pb[0], pb[1], pb[2]),
+        "world_a": a,
+        "world_b": b,
+        "color": color,
+        "kind": kind,
+        "width": width_px,
+    }
+
+
+def build_floor_grid_segments(camera, width, height, focal,
+                              x_range=range(-8, 9), z_range=range(0, 17),
+                              model_vertices=None, ground_y=None):
+    """Return projected ground grid, axes, and the model footprint."""
+    segments = []
+
+    def push_segment(a, b, color, kind, width_px=1):
+        segment = _project_segment(
+            camera, width, height, focal, a, b, color, kind, width_px)
+        if segment is not None:
+            segments.append(segment)
+
+    if model_vertices:
+        min_x = min(p[0] for p in model_vertices)
+        max_x = max(p[0] for p in model_vertices)
+        min_y = min(p[1] for p in model_vertices)
+        min_z = min(p[2] for p in model_vertices)
+        max_z = max(p[2] for p in model_vertices)
+        floor_y = min_y - 0.02 if ground_y is None else ground_y
+        x_min = math.floor(min(min_x - 2.0, -1.0))
+        x_max = math.ceil(max(max_x + 2.0, 1.0))
+        z_min = math.floor(min(min_z - 2.0, 0.0))
+        z_max = math.ceil(max(max_z + 2.0, 1.0))
+        x_values = range(x_min, x_max + 1)
+        z_values = range(z_min, z_max + 1)
+    else:
+        floor_y = -1.1 if ground_y is None else ground_y
+        x_values = x_range
+        z_values = z_range
+        x_min = min(x_values)
+        x_max = max(x_values)
+        z_min = min(z_values)
+        z_max = max(z_values)
+        min_x = max_x = min_z = max_z = None
+
+    for x in x_values:
+        push_segment((float(x), floor_y, float(z_min)),
+                     (float(x), floor_y, float(z_max)),
+                     (188, 200, 214), "grid")
+    for z in z_values:
+        push_segment((float(x_min), floor_y, float(z)),
+                     (float(x_max), floor_y, float(z)),
+                     (188, 200, 214), "grid")
+
+    axis_y = floor_y + 0.01
+    push_segment((float(x_min), axis_y, 0.0),
+                 (float(x_max), axis_y, 0.0),
+                 (150, 120, 70), "axis", 2)
+    push_segment((0.0, axis_y, float(z_min)),
+                 (0.0, axis_y, float(z_max)),
+                 (100, 145, 210), "axis", 2)
+    push_segment((0.0, floor_y, 0.0),
+                 (0.0, floor_y + 3.5, 0.0),
+                 (125, 170, 105), "axis", 2)
+
+    if model_vertices:
+        corners = [
+            (min_x, floor_y, min_z),
+            (max_x, floor_y, min_z),
+            (max_x, floor_y, max_z),
+            (min_x, floor_y, max_z),
+        ]
+        for i, corner in enumerate(corners):
+            push_segment(corner, corners[(i + 1) % len(corners)],
+                         (230, 150, 55), "footprint", 2)
+
+    return segments
+
+
+def build_light_gizmo_segments(camera, light_position, target, width, height,
+                               focal, ground_y=-1.02):
+    """Return projected helper lines that make the point light spatial."""
+    ground_point = (light_position[0], ground_y, light_position[2])
+    specs = [
+        (light_position, ground_point, (210, 150, 25), "light_drop", 2),
+        (light_position, target, (238, 190, 70), "light_to_target", 2),
+        (ground_point, target, (185, 170, 120), "light_ground_to_target", 1),
+    ]
+    segments = []
+    for a, b, color, kind, width_px in specs:
+        segment = _project_segment(
+            camera, width, height, focal, a, b, color, kind, width_px)
+        if segment is not None:
+            segments.append(segment)
+    return segments
