@@ -1,0 +1,314 @@
+from __future__ import annotations
+
+import math
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+from algorithms.circle import midpoint_circle
+from algorithms.ellipse import midpoint_ellipse
+from algorithms.fill import scanline_fill
+from algorithms.line import bresenham_line, dashed_line
+from core.document import Document
+from core.shapes import ConnectorShape, FlowchartShape, LineShape, TextShape
+
+
+Color = tuple[int, int, int, int]
+
+
+class Renderer:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+
+    def render(
+        self,
+        document: Document,
+        zoom: float = 1.0,
+        pan: tuple[float, float] = (0, 0),
+        selected_ids: set[str] | None = None,
+        show_grid: bool = True,
+        draft: bool = False,
+    ) -> Image.Image:
+        image = Image.new("RGBA", (self.width, self.height), _color(document.background))
+        pixels = image.load()
+        if show_grid:
+            self._draw_grid(pixels, document.grid_size, zoom, pan)
+        for shape in sorted(document.shapes, key=lambda item: item.z_order):
+            self._draw_shape(image, pixels, shape, zoom, pan, draft=draft)
+        for connector in document.connectors:
+            self._draw_connector(pixels, document, connector, zoom, pan)
+        if selected_ids:
+            self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan)
+        return image
+
+    def _draw_grid(self, pixels, grid_size: int, zoom: float, pan: tuple[float, float]) -> None:
+        spacing = max(8, round(grid_size * zoom))
+        offset_x = round(pan[0] % spacing)
+        offset_y = round(pan[1] % spacing)
+        for x in range(offset_x, self.width, spacing):
+            _draw_line(pixels, (x, 0), (x, self.height - 1), "#2A2A3E")
+        for y in range(offset_y, self.height, spacing):
+            _draw_line(pixels, (0, y), (self.width - 1, y), "#2A2A3E")
+
+    def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
+        if isinstance(shape, FlowchartShape):
+            points = [self._world_to_screen(point, zoom, pan) for point in shape.outline_points()]
+            if not draft:
+                _fill_polygon(pixels, points, shape.style.fill)
+            _draw_polyline(pixels, points + [points[0]], shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
+            for a, b in shape.extra_segments():
+                _draw_line(pixels, self._world_to_screen(a, zoom, pan), self._world_to_screen(b, zoom, pan), shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)))
+            if shape.kind == "database":
+                x1, y1, x2, y2 = shape.bounds()
+                cx = (x1 + x2) / 2
+                rx = (x2 - x1) / 2
+                ry = max(4, (y2 - y1) * 0.14)
+                for cy in (y1 + ry, y2 - ry):
+                    _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), rx * zoom, ry * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
+            if shape.text:
+                self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
+        elif isinstance(shape, LineShape):
+            _draw_line(
+                pixels,
+                self._world_to_screen((shape.x1, shape.y1), zoom, pan),
+                self._world_to_screen((shape.x2, shape.y2), zoom, pan),
+                shape.style.stroke,
+                max(1, round(shape.style.stroke_width * zoom)),
+                shape.style.dash,
+            )
+        elif isinstance(shape, TextShape):
+            self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
+
+    def _draw_connector(
+        self,
+        pixels,
+        document: Document,
+        connector: ConnectorShape,
+        zoom: float,
+        pan: tuple[float, float],
+    ) -> None:
+        points = [self._world_to_screen(point, zoom, pan) for point in document.connector_points(connector)]
+        if len(points) < 2:
+            return
+        width = max(1, round(connector.style.stroke_width * zoom))
+        _draw_polyline(pixels, points, connector.style.stroke, width, connector.style.dash or None)
+        if connector.arrow_end != "none":
+            _draw_arrowhead(pixels, points[-2], points[-1], connector.style.stroke, connector.arrow_end)
+        if connector.arrow_start != "none":
+            _draw_arrowhead(pixels, points[1], points[0], connector.style.stroke, connector.arrow_start)
+
+    def _draw_selection(self, pixels, bounds: tuple[float, float, float, float], zoom: float, pan: tuple[float, float]) -> None:
+        x1, y1 = self._world_to_screen((bounds[0], bounds[1]), zoom, pan)
+        x2, y2 = self._world_to_screen((bounds[2], bounds[3]), zoom, pan)
+        _draw_polyline(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)], "#5BA8FF", 1, [6, 4])
+        for x, y in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]:
+            _fill_polygon(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3)], "#1E1E2E")
+            _draw_polyline(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3), (x - 3, y - 3)], "#5BA8FF")
+
+    def _draw_selection_overlay(self, pixels, document: Document, selected_ids: set[str], zoom: float, pan: tuple[float, float]) -> None:
+        bounds = [shape.bounds() for shape in document.shapes if shape.id in selected_ids]
+        if not bounds:
+            return
+        union = (
+            min(item[0] for item in bounds),
+            min(item[1] for item in bounds),
+            max(item[2] for item in bounds),
+            max(item[3] for item in bounds),
+        )
+        self._draw_selection(pixels, union, zoom, pan)
+
+    def _draw_text(
+        self,
+        image: Image.Image,
+        text: str,
+        bounds: tuple[float, float, float, float],
+        style,
+        zoom: float,
+        pan: tuple[float, float],
+    ) -> None:
+        draw = ImageDraw.Draw(image)
+        font = _load_font(max(8, round(style.font_size * zoom)), bold=style.bold)
+        x1, y1 = self._world_to_screen((bounds[0], bounds[1]), zoom, pan)
+        x2, y2 = self._world_to_screen((bounds[2], bounds[3]), zoom, pan)
+        lines = text.split("\n")
+        sample_bbox = draw.textbbox((0, 0), "Ag中", font=font)
+        line_height = sample_bbox[3] - sample_bbox[1] + 4
+        total_height = line_height * len(lines)
+        start_y = y1 + (y2 - y1 - total_height) / 2
+        align = getattr(style, "text_align", "center")
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            tw = bbox[2] - bbox[0]
+            if align == "left":
+                lx = x1 + 4
+            elif align == "right":
+                lx = x2 - tw - 4
+            else:
+                lx = x1 + (x2 - x1 - tw) / 2
+            ly = start_y + i * line_height
+            draw.text((lx, ly), line, fill=_color(style.text_color), font=font)
+
+    def _world_to_screen(self, point: tuple[float, float], zoom: float, pan: tuple[float, float]) -> tuple[int, int]:
+        return round(point[0] * zoom + pan[0]), round(point[1] * zoom + pan[1])
+
+
+def _draw_line(
+    pixels,
+    start: tuple[int | float, int | float],
+    end: tuple[int | float, int | float],
+    color,
+    width: int = 1,
+    dash: list[int] | None = None,
+) -> None:
+    if dash:
+        points = dashed_line(round(start[0]), round(start[1]), round(end[0]), round(end[1]), dash)
+    else:
+        points = bresenham_line(round(start[0]), round(start[1]), round(end[0]), round(end[1]))
+    _draw_points(pixels, points, color, width)
+
+
+def _draw_polyline(
+    pixels,
+    points: list[tuple[int | float, int | float]],
+    color,
+    width: int = 1,
+    dash: list[int] | None = None,
+) -> None:
+    for a, b in zip(points, points[1:]):
+        _draw_line(pixels, a, b, color, width, dash)
+
+
+def _draw_points(pixels, points: list[tuple[int | float, int | float]], color, width: int = 1) -> None:
+    rgba = _color(color)
+    radius = max(0, width // 2)
+    for x, y in points:
+        if radius == 0:
+            _put_pixel(pixels, x, y, rgba)
+            continue
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                if dx * dx + dy * dy <= radius * radius:
+                    _put_pixel(pixels, x + dx, y + dy, rgba)
+
+
+def _fill_polygon(pixels, points: list[tuple[int | float, int | float]], color) -> None:
+    if color is None:
+        return
+    rgba = _color(color)
+    for x, y in scanline_fill(points):
+        _put_pixel(pixels, x, y, rgba)
+
+
+def _draw_ellipse(
+    pixels,
+    center: tuple[int | float, int | float],
+    rx: float,
+    ry: float,
+    stroke,
+    fill=None,
+    width: int = 1,
+) -> None:
+    cx, cy = center
+    if fill is not None:
+        for y in range(round(cy - ry), round(cy + ry) + 1):
+            if ry == 0:
+                span = rx
+            else:
+                dy = (y - cy) / ry
+                if dy * dy > 1:
+                    continue
+                span = abs(rx) * math.sqrt(1 - dy * dy)
+            _draw_line(pixels, (cx - span, y), (cx + span, y), fill)
+    _draw_points(pixels, midpoint_ellipse(round(cx), round(cy), round(rx), round(ry)), stroke, width)
+
+
+def _draw_arrowhead(pixels, start: tuple[int, int], end: tuple[int, int], color, style: str = "arrow") -> None:
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length < 1:
+        return
+    ux = dx / length
+    uy = dy / length
+    size = 12
+    if style in ("arrow", "open_arrow"):
+        left = (end[0] - ux * size - uy * size * 0.45, end[1] - uy * size + ux * size * 0.45)
+        right = (end[0] - ux * size + uy * size * 0.45, end[1] - uy * size - ux * size * 0.45)
+        if style == "arrow":
+            _fill_polygon(pixels, [end, left, right], color)
+            _draw_polyline(pixels, [end, left, right, end], color)
+        else:
+            _draw_polyline(pixels, [left, end, right], color, 2)
+    elif style == "diamond":
+        mid = (end[0] - ux * size, end[1] - uy * size)
+        back = (end[0] - ux * size * 2, end[1] - uy * size * 2)
+        left = (mid[0] - uy * size * 0.4, mid[1] + ux * size * 0.4)
+        right = (mid[0] + uy * size * 0.4, mid[1] - ux * size * 0.4)
+        _fill_polygon(pixels, [end, left, back, right], color)
+        _draw_polyline(pixels, [end, left, back, right, end], color)
+    elif style == "dot":
+        cx = end[0] - ux * 6
+        cy = end[1] - uy * 6
+        r = 5
+        _draw_points(pixels, midpoint_circle(round(cx), round(cy), r), color, 1)
+        for dy_off in range(-r, r + 1):
+            span = round(math.sqrt(max(0, r * r - dy_off * dy_off)))
+            _draw_line(pixels, (cx - span, cy + dy_off), (cx + span, cy + dy_off), color)
+
+
+def _put_pixel(pixels, x: int | float, y: int | float, color: Color) -> None:
+    xi = round(x)
+    yi = round(y)
+    if xi < 0 or yi < 0:
+        return
+    try:
+        pixels[xi, yi] = color
+    except IndexError:
+        return
+
+
+def _color(value) -> Color:
+    if value is None:
+        return (0, 0, 0, 0)
+    if isinstance(value, tuple):
+        if len(value) == 3:
+            return value[0], value[1], value[2], 255
+        return value  # type: ignore[return-value]
+    text = str(value).strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 6:
+        return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16), 255
+    if len(text) == 8:
+        return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16), int(text[6:8], 16)
+    raise ValueError(f"Unsupported color value: {value!r}")
+
+
+_font_cache: dict[tuple[int, bool], ImageFont.ImageFont] = {}
+
+
+def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    key = (size, bold)
+    if key in _font_cache:
+        return _font_cache[key]
+    if bold:
+        candidates = [
+            Path("C:/Windows/Fonts/msyhbd.ttc"),
+            Path("C:/Windows/Fonts/simhei.ttf"),
+            Path("C:/Windows/Fonts/arialbd.ttf"),
+        ]
+    else:
+        candidates = [
+            Path("C:/Windows/Fonts/msyh.ttc"),
+            Path("C:/Windows/Fonts/simhei.ttf"),
+            Path("C:/Windows/Fonts/arial.ttf"),
+        ]
+    for path in candidates:
+        if path.exists():
+            font = ImageFont.truetype(str(path), size=size)
+            _font_cache[key] = font
+            return font
+    font = ImageFont.load_default()
+    _font_cache[key] = font
+    return font

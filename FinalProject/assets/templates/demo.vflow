@@ -1,0 +1,162 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "title": "VectorFlow 演示流程图"
+  },
+  "canvas": {
+    "width": 2400,
+    "height": 1600,
+    "background": "#1E1E2E",
+    "grid_size": 20,
+    "snap_enabled": true
+  },
+  "shapes": [
+    {
+      "id": "shape_start",
+      "type": "flowchart",
+      "kind": "terminal",
+      "x": 80,
+      "y": 80,
+      "width": 150,
+      "height": 70,
+      "text": "开始",
+      "style": {
+        "stroke": "#79A7FF",
+        "fill": "#283850",
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 0,
+      "rotation": 0,
+      "flip_x": false,
+      "flip_y": false
+    },
+    {
+      "id": "shape_process",
+      "type": "flowchart",
+      "kind": "process",
+      "x": 330,
+      "y": 80,
+      "width": 170,
+      "height": 70,
+      "text": "读取输入",
+      "style": {
+        "stroke": "#79A7FF",
+        "fill": "#283850",
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 1,
+      "rotation": 0,
+      "flip_x": false,
+      "flip_y": false
+    },
+    {
+      "id": "shape_decision",
+      "type": "flowchart",
+      "kind": "decision",
+      "x": 610,
+      "y": 65,
+      "width": 140,
+      "height": 100,
+      "text": "合法?",
+      "style": {
+        "stroke": "#79A7FF",
+        "fill": "#283850",
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 2,
+      "rotation": 0,
+      "flip_x": false,
+      "flip_y": false
+    },
+    {
+      "id": "shape_data",
+      "type": "flowchart",
+      "kind": "data",
+      "x": 860,
+      "y": 80,
+      "width": 160,
+      "height": 70,
+      "text": "输出结果",
+      "style": {
+        "stroke": "#79A7FF",
+        "fill": "#283850",
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 3,
+      "rotation": 0,
+      "flip_x": false,
+      "flip_y": false
+    }
+  ],
+  "connectors": [
+    {
+      "id": "conn_1",
+      "type": "connector",
+      "start_shape_id": "shape_start",
+      "end_shape_id": "shape_process",
+      "start_anchor": "right",
+      "end_anchor": "left",
+      "kind": "elbow",
+      "arrow_end": "arrow",
+      "style": {
+        "stroke": "#A7C7FF",
+        "fill": null,
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 10000
+    },
+    {
+      "id": "conn_2",
+      "type": "connector",
+      "start_shape_id": "shape_process",
+      "end_shape_id": "shape_decision",
+      "start_anchor": "right",
+      "end_anchor": "left",
+      "kind": "elbow",
+      "arrow_end": "arrow",
+      "style": {
+        "stroke": "#A7C7FF",
+        "fill": null,
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 10000
+    },
+    {
+      "id": "conn_3",
+      "type": "connector",
+      "start_shape_id": "shape_decision",
+      "end_shape_id": "shape_data",
+      "start_anchor": "right",
+      "end_anchor": "left",
+      "kind": "elbow",
+      "arrow_end": "arrow",
+      "style": {
+        "stroke": "#A7C7FF",
+        "fill": null,
+        "stroke_width": 2,
+        "dash": [],
+        "font_size": 14,
+        "text_color": "#D0D0E0"
+      },
+      "z_order": 10000
+    }
+  ]
+}
