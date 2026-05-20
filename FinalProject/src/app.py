@@ -70,6 +70,9 @@ class VectorFlowApp(tk.Tk):
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
         self._guides: list[tuple[str, float]] = []
+        self._space_held: bool = False
+        self._space_pan_start: tuple[int, int] | None = None
+        self._space_pan_origin: tuple[float, float] | None = None
 
         self._configure_style()
         self._build_menu()
@@ -216,6 +219,8 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Escape>", lambda _e: self.clear_selection())
         for key, tool in [("v", "select"), ("l", "line"), ("t", "text"), ("k", "connector")]:
             self.bind(key, lambda _e, t=tool: self.set_tool(t))
+        self.bind("<KeyPress-space>", self.on_space_down)
+        self.bind("<KeyRelease-space>", self.on_space_up)
 
     def _seed_demo(self) -> None:
         start = self.document.add_shape(FlowchartShape("terminal", 80, 80, 150, 70, "开始"))
@@ -266,12 +271,22 @@ class VectorFlowApp(tk.Tk):
         self.redraw()
 
     def on_mouse_move(self, event) -> None:
+        if self._space_held and self._space_pan_start is not None and self._space_pan_origin is not None:
+            dx = event.x - self._space_pan_start[0]
+            dy = event.y - self._space_pan_start[1]
+            self.pan = (self._space_pan_origin[0] + dx, self._space_pan_origin[1] + dy)
+            self.redraw(draft=True)
+            return
         x, y = self.screen_to_world(event.x, event.y)
         self.status_text.set(f"工具: {self.current_tool.get()} | ({round(x)}, {round(y)}) | 缩放: {round(self.zoom * 100)}%")
 
     def on_left_down(self, event) -> None:
         if self._inline_editor:
             self._commit_inline_editor()
+            return
+        if self._space_held:
+            self._space_pan_start = (event.x, event.y)
+            self._space_pan_origin = self.pan
             return
         self.drag_start = self.screen_to_world(event.x, event.y)
         self.drag_mode = None
@@ -421,6 +436,17 @@ class VectorFlowApp(tk.Tk):
         if isinstance(shape, (FlowchartShape, TextShape)):
             self._open_inline_editor_for_shape(shape)
 
+    def on_space_down(self, event) -> None:
+        if not self._space_held:
+            self._space_held = True
+            self.canvas.config(cursor="fleur")
+
+    def on_space_up(self, event) -> None:
+        self._space_held = False
+        self._space_pan_start = None
+        self._space_pan_origin = None
+        self.canvas.config(cursor="crosshair")
+
     def on_pan_start(self, event) -> None:
         self.drag_start = (event.x, event.y)
 
@@ -434,13 +460,12 @@ class VectorFlowApp(tk.Tk):
         self.redraw(draft=True)
 
     def on_mouse_wheel(self, event) -> None:
-        if event.state & 0x0004:
-            factor = 1.1 if event.delta > 0 else 0.9
-            world_before = self.screen_to_world(event.x, event.y)
-            self.zoom = max(0.2, min(3.5, self.zoom * factor))
-            sx, sy = self.world_to_screen(world_before)
-            self.pan = (self.pan[0] + event.x - sx, self.pan[1] + event.y - sy)
-            self.redraw()
+        factor = 1.1 if event.delta > 0 else 1 / 1.1
+        world_before = self.screen_to_world(event.x, event.y)
+        self.zoom = max(0.1, min(8.0, self.zoom * factor))
+        sx, sy = self.world_to_screen(world_before)
+        self.pan = (self.pan[0] + event.x - sx, self.pan[1] + event.y - sy)
+        self.redraw()
 
     # ── Shape creation ──────────────────────────────────────────────
 
