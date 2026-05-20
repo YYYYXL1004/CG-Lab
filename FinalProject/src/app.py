@@ -108,7 +108,7 @@ class VectorFlowApp(tk.Tk):
 
         edit_menu = tk.Menu(menu, tearoff=False)
         edit_menu.add_command(label="撤销", accelerator="Ctrl+Z", command=self.undo)
-        edit_menu.add_command(label="重做", accelerator="Ctrl+Y", command=self.redo)
+        edit_menu.add_command(label="清屏", command=self.clear_canvas)
         edit_menu.add_separator()
         edit_menu.add_command(label="复制", accelerator="Ctrl+C", command=self.copy_selection)
         edit_menu.add_command(label="粘贴", accelerator="Ctrl+V", command=self.paste_selection)
@@ -131,8 +131,12 @@ class VectorFlowApp(tk.Tk):
             ttk.Button(top, text=label, style="Tool.TButton", command=lambda t=tool: self.set_tool(t)).pack(side=tk.LEFT, padx=2, pady=4)
         self.undo_btn = ttk.Button(top, text="撤销", command=self.undo)
         self.undo_btn.pack(side=tk.LEFT, padx=2)
-        self.redo_btn = ttk.Button(top, text="重做", command=self.redo)
-        self.redo_btn.pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="清屏", command=self.clear_canvas).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=4)
+        ttk.Button(top, text="图形样式…", command=self.open_style_dialog).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="连接线…", command=self.open_connector_dialog).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="文本样式…", command=self.open_text_dialog).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="变换…", command=self.open_transform_dialog).pack(side=tk.LEFT, padx=2)
         ttk.Checkbutton(top, text="网格", variable=self.show_grid, command=self.redraw).pack(side=tk.LEFT, padx=10)
         ttk.Button(top, text="保存", style="Accent.TButton", command=self.save_document).pack(side=tk.RIGHT, padx=4)
         ttk.Button(top, text="导出 PNG", command=self.export_png).pack(side=tk.RIGHT, padx=4)
@@ -163,55 +167,7 @@ class VectorFlowApp(tk.Tk):
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Motion>", self.on_mouse_move)
 
-        prop = ttk.Frame(main, width=220)
-        prop.pack(side=tk.RIGHT, fill=tk.Y)
-        self.properties = prop
-
-        ttk.Label(prop, text="图形样式").pack(anchor=tk.W, padx=10, pady=(10, 4))
-        ttk.Label(prop, text="描边色").pack(anchor=tk.W, padx=10)
-        ttk.Button(prop, textvariable=self.stroke_color, command=self.choose_stroke).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(prop, text="填充色").pack(anchor=tk.W, padx=10)
-        ttk.Button(prop, textvariable=self.fill_color, command=self.choose_fill).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(prop, text="线宽").pack(anchor=tk.W, padx=10)
-        ttk.Spinbox(prop, from_=1, to=12, textvariable=self.stroke_width, width=6).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(prop, text="应用样式", command=self.apply_style).pack(fill=tk.X, padx=10, pady=4)
-
-        ttk.Separator(prop, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=6)
-        ttk.Label(prop, text="变换").pack(anchor=tk.W, padx=10)
-        r_frame = ttk.Frame(prop)
-        r_frame.pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(r_frame, text="旋转°").pack(side=tk.LEFT)
-        ttk.Spinbox(r_frame, from_=-360, to=360, textvariable=self.rotate_deg, width=5).pack(side=tk.LEFT, padx=4)
-        ttk.Button(r_frame, text="旋转", command=self._do_rotate).pack(side=tk.LEFT, padx=2)
-        s_frame = ttk.Frame(prop)
-        s_frame.pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(s_frame, text="缩放%").pack(side=tk.LEFT)
-        ttk.Spinbox(s_frame, from_=10, to=500, textvariable=self.scale_pct, width=5).pack(side=tk.LEFT, padx=4)
-        ttk.Button(s_frame, text="缩放", command=self._do_scale).pack(side=tk.LEFT, padx=2)
-        flip_frame = ttk.Frame(prop)
-        flip_frame.pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(flip_frame, text="水平翻转", command=self.flip_horizontal).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(flip_frame, text="垂直翻转", command=self.flip_vertical).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
-
-        ttk.Separator(prop, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=6)
-        ttk.Label(prop, text="连接线样式").pack(anchor=tk.W, padx=10)
-        ttk.Label(prop, text="线型").pack(anchor=tk.W, padx=10)
-        ttk.Combobox(prop, textvariable=self.conn_kind_var, values=list(CONN_KINDS.keys()), state="readonly", width=14).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(prop, text="终点").pack(anchor=tk.W, padx=10)
-        ttk.Combobox(prop, textvariable=self.conn_arrow_end_var, values=list(ARROW_MAP.keys()), state="readonly", width=14).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(prop, text="起点").pack(anchor=tk.W, padx=10)
-        ttk.Combobox(prop, textvariable=self.conn_arrow_start_var, values=list(ARROW_MAP.keys()), state="readonly", width=14).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Label(prop, text="线条").pack(anchor=tk.W, padx=10)
-        ttk.Combobox(prop, textvariable=self.conn_dash_var, values=list(DASH_PRESETS.keys()), state="readonly", width=14).pack(fill=tk.X, padx=10, pady=2)
-
-        ttk.Separator(prop, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=6)
-        ttk.Label(prop, text="文本样式").pack(anchor=tk.W, padx=10)
-        ttk.Label(prop, text="对齐").pack(anchor=tk.W, padx=10)
-        ttk.Combobox(prop, textvariable=self.text_align_var, values=list(ALIGN_MAP.keys()), state="readonly", width=14).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Checkbutton(prop, text="加粗", variable=self.text_bold_var).pack(anchor=tk.W, padx=10, pady=2)
-        ttk.Label(prop, text="文字颜色").pack(anchor=tk.W, padx=10)
-        ttk.Button(prop, textvariable=self.text_color_var, command=self.choose_text_color).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(prop, text="应用文本样式", command=self.apply_text_style).pack(fill=tk.X, padx=10, pady=4)
+        # No right-side panel — dialogs handle all properties
 
         status = ttk.Frame(self)
         status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -224,9 +180,6 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-S>", lambda _e: self.save_document_as())
         self.bind("<Control-e>", lambda _e: self.export_png())
         self.bind("<Control-z>", lambda _e: self.undo())
-        self.bind("<Control-y>", lambda _e: self.redo())
-        self.bind("<Control-Shift-z>", lambda _e: self.redo())
-        self.bind("<Control-Shift-Z>", lambda _e: self.redo())
         self.bind("<Control-c>", lambda _e: self.copy_selection())
         self.bind("<Control-v>", lambda _e: self.paste_selection())
         self.bind("<Delete>", lambda _e: self.delete_selection())
@@ -267,14 +220,13 @@ class VectorFlowApp(tk.Tk):
         self._update_status()
 
     def _update_status(self, msg: str | None = None) -> None:
+        self.undo_btn.config(state=tk.NORMAL if self.history.can_undo else tk.DISABLED)
         if msg:
             self.status_text.set(msg)
             return
         parts = [f"工具: {self.current_tool.get()}", f"缩放: {round(self.zoom * 100)}%", f"图形: {len(self.document.shapes)}"]
         if self.history.can_undo:
             parts.append("可撤销")
-        if self.history.can_redo:
-            parts.append("可重做")
         self.status_text.set(" | ".join(parts))
 
     # ── Mouse events ────────────────────────────────────────────────
@@ -605,6 +557,82 @@ class VectorFlowApp(tk.Tk):
         self._push_history()
         self.redraw()
 
+    # ── Property Dialogs ────────────────────────────────────────────
+
+    def open_style_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("图形样式")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        pad = dict(padx=12, pady=4)
+        ttk.Label(dlg, text="描边色").grid(row=0, column=0, sticky=tk.W, **pad)
+        ttk.Button(dlg, textvariable=self.stroke_color, command=self.choose_stroke, width=14).grid(row=0, column=1, **pad)
+        ttk.Label(dlg, text="填充色").grid(row=1, column=0, sticky=tk.W, **pad)
+        ttk.Button(dlg, textvariable=self.fill_color, command=self.choose_fill, width=14).grid(row=1, column=1, **pad)
+        ttk.Label(dlg, text="线宽").grid(row=2, column=0, sticky=tk.W, **pad)
+        ttk.Spinbox(dlg, from_=1, to=12, textvariable=self.stroke_width, width=6).grid(row=2, column=1, sticky=tk.W, **pad)
+        ttk.Button(dlg, text="应用样式", command=lambda: (self.apply_style(), dlg.destroy())).grid(row=3, column=0, columnspan=2, pady=8)
+
+    def open_connector_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("连接线样式")
+        dlg.resizable(False, False)
+        dlg.lift()
+        dlg.focus_force()
+
+        def make_radio_group(parent, label: str, var: tk.StringVar, options: list[str], row: int) -> None:
+            ttk.Label(parent, text=label, font=("", 9, "bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(8, 2))
+            for i, opt in enumerate(options):
+                ttk.Radiobutton(parent, text=opt, variable=var, value=opt).grid(
+                    row=row + 1 + i // 2, column=i % 2, sticky=tk.W, padx=16, pady=1
+                )
+
+        r = 0
+        make_radio_group(dlg, "线型", self.conn_kind_var, list(CONN_KINDS.keys()), r)
+        r += 1 + (len(CONN_KINDS) + 1) // 2
+        make_radio_group(dlg, "终点箭头", self.conn_arrow_end_var, list(ARROW_MAP.keys()), r)
+        r += 1 + (len(ARROW_MAP) + 1) // 2
+        make_radio_group(dlg, "起点箭头", self.conn_arrow_start_var, list(ARROW_MAP.keys()), r)
+        r += 1 + (len(ARROW_MAP) + 1) // 2
+        make_radio_group(dlg, "线条样式", self.conn_dash_var, list(DASH_PRESETS.keys()), r)
+        r += 1 + (len(DASH_PRESETS) + 1) // 2
+        ttk.Button(dlg, text="关闭", command=dlg.destroy).grid(row=r, column=0, columnspan=2, pady=10)
+
+    def open_text_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("文本样式")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        pad = dict(padx=12, pady=5)
+        ttk.Label(dlg, text="对齐").grid(row=0, column=0, sticky=tk.W, **pad)
+        ttk.Combobox(dlg, textvariable=self.text_align_var, values=list(ALIGN_MAP.keys()), state="readonly", width=14).grid(row=0, column=1, **pad)
+        ttk.Label(dlg, text="加粗").grid(row=1, column=0, sticky=tk.W, **pad)
+        ttk.Checkbutton(dlg, variable=self.text_bold_var).grid(row=1, column=1, sticky=tk.W, **pad)
+        ttk.Label(dlg, text="文字颜色").grid(row=2, column=0, sticky=tk.W, **pad)
+        ttk.Button(dlg, textvariable=self.text_color_var, command=self.choose_text_color, width=14).grid(row=2, column=1, **pad)
+        ttk.Button(dlg, text="应用文本样式", command=lambda: (self.apply_text_style(), dlg.destroy())).grid(row=3, column=0, columnspan=2, pady=8)
+
+    def open_transform_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("变换")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        pad = dict(padx=12, pady=5)
+        ttk.Label(dlg, text="旋转角度°").grid(row=0, column=0, sticky=tk.W, **pad)
+        ttk.Spinbox(dlg, from_=-360, to=360, textvariable=self.rotate_deg, width=7).grid(row=0, column=1, sticky=tk.W, **pad)
+        ttk.Button(dlg, text="旋转", command=self._do_rotate).grid(row=0, column=2, padx=4, pady=5)
+        ttk.Label(dlg, text="缩放比例%").grid(row=1, column=0, sticky=tk.W, **pad)
+        ttk.Spinbox(dlg, from_=10, to=500, textvariable=self.scale_pct, width=7).grid(row=1, column=1, sticky=tk.W, **pad)
+        ttk.Button(dlg, text="缩放", command=self._do_scale).grid(row=1, column=2, padx=4, pady=5)
+        flip_frame = ttk.Frame(dlg)
+        flip_frame.grid(row=2, column=0, columnspan=3, pady=6, padx=12)
+        ttk.Button(flip_frame, text="水平翻转", command=self.flip_horizontal).pack(side=tk.LEFT, padx=4)
+        ttk.Button(flip_frame, text="垂直翻转", command=self.flip_vertical).pack(side=tk.LEFT, padx=4)
+        ttk.Button(dlg, text="关闭", command=dlg.destroy).grid(row=3, column=0, columnspan=3, pady=8)
+
     # ── Clipboard ───────────────────────────────────────────────────
 
     def copy_selection(self) -> None:
@@ -648,13 +676,15 @@ class VectorFlowApp(tk.Tk):
         else:
             self._update_status("没有可撤销的操作")
 
-    def redo(self) -> None:
-        if self.history.redo(self.document):
-            self.selected_ids.clear()
-            self.redraw()
-            self._update_status("已重做")
-        else:
-            self._update_status("没有可重做的操作")
+    def clear_canvas(self) -> None:
+        if not messagebox.askyesno("清屏确认", "确定要清除所有图形吗？此操作可撤销。"):
+            return
+        self.document.shapes.clear()
+        self.document.connectors.clear()
+        self.selected_ids.clear()
+        self._push_history()
+        self.redraw()
+        self._update_status("已清屏")
 
     # ── Transforms ──────────────────────────────────────────────────
 
