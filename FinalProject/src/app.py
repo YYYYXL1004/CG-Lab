@@ -211,7 +211,8 @@ class VectorFlowApp(tk.Tk):
     def redraw(self, draft: bool = False) -> None:
         width = max(1, self.canvas.winfo_width())
         height = max(1, self.canvas.winfo_height())
-        self.renderer = Renderer(width, height)
+        if self.renderer is None or self.renderer.width != width or self.renderer.height != height:
+            self.renderer = Renderer(width, height)
         image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft)
         self.photo = ImageTk.PhotoImage(image)
         self.canvas.delete("render")

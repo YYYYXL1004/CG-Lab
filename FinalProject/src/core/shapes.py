@@ -51,27 +51,29 @@ class FlowchartShape:
             points = [(x, y), (x + w, y), (x + w, y + h - 6)] + wave + [(x, y + h)]
         else:
             points = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
-        return [self._apply_local_transform(px, py) for px, py in points]
+        matrix = self._local_matrix()
+        return [_mat_apply(matrix, px, py) for px, py in points]
 
     def extra_segments(self) -> list[tuple[tuple[float, float], tuple[float, float]]]:
         x, y, w, h = self.x, self.y, self.width, self.height
-        segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        segs: list[tuple[tuple[float, float], tuple[float, float]]] = []
         if self.kind == "subprocess":
             margin = min(18, w / 5)
-            segments.extend([((x + margin, y), (x + margin, y + h)), ((x + w - margin, y), (x + w - margin, y + h))])
+            segs.extend([((x + margin, y), (x + margin, y + h)), ((x + w - margin, y), (x + w - margin, y + h))])
         elif self.kind == "database":
-            segments.extend([((x, y + h * 0.22), (x, y + h * 0.82)), ((x + w, y + h * 0.22), (x + w, y + h * 0.82))])
-        return [(self._apply_local_transform(*a), self._apply_local_transform(*b)) for a, b in segments]
+            segs.extend([((x, y + h * 0.22), (x, y + h * 0.82)), ((x + w, y + h * 0.22), (x + w, y + h * 0.82))])
+        matrix = self._local_matrix()
+        return [(_mat_apply(matrix, *a), _mat_apply(matrix, *b)) for a, b in segs]
 
-    def _apply_local_transform(self, px: float, py: float) -> tuple[float, float]:
+    def _local_matrix(self) -> "Matrix3":
+        """Build the combined flip+rotation transform matrix once for this shape."""
         center = self.center()
         matrix = Matrix3.identity()
         if self.flip_x or self.flip_y:
             matrix = Matrix3.reflection(horizontal=self.flip_x, vertical=self.flip_y, center=center) @ matrix
         if self.rotation:
             matrix = Matrix3.rotation(math.radians(self.rotation), center=center) @ matrix
-        transformed = matrix.apply(Point(px, py))
-        return transformed.x, transformed.y
+        return matrix
 
     def move(self, dx: float, dy: float) -> None:
         self.x += dx
@@ -323,6 +325,11 @@ def shape_from_dict(payload: dict) -> Shape:
     if shape_type == "text":
         return TextShape.from_dict(payload)
     raise ValueError(f"Unsupported shape type: {shape_type!r}")
+
+
+def _mat_apply(matrix: "Matrix3", px: float, py: float) -> tuple[float, float]:
+    transformed = matrix.apply(Point(px, py))
+    return transformed.x, transformed.y
 
 
 def _point_segment_distance(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:

@@ -32,6 +32,5 @@ def scanline_fill(vertices: Iterable[PointTuple]) -> list[tuple[int, int]]:
                 intersections.append(x1 + t * (x2 - x1))
         intersections.sort()
         for left, right in zip(intersections[0::2], intersections[1::2]):
-            for x in range(math.ceil(left), math.floor(right) + 1):
-                pixels.append((x, y))
+            pixels.extend((x, y) for x in range(math.ceil(left), math.floor(right) + 1))
     return pixels

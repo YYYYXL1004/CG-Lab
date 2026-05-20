@@ -27,7 +27,10 @@ class Document:
         return connector
 
     def find_shape(self, shape_id: str) -> Shape | None:
-        return next((shape for shape in self.shapes if shape.id == shape_id), None)
+        for shape in self.shapes:
+            if shape.id == shape_id:
+                return shape
+        return None
 
     def shape_at(self, x: float, y: float) -> Shape | None:
         for shape in sorted(self.shapes, key=lambda item: item.z_order, reverse=True):

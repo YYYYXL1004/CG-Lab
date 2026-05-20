@@ -39,7 +39,7 @@ def wu_line(x0: float, y0: float, x1: float, y1: float) -> list[tuple[int, int, 
         intery += gradient
 
     _plot(pixels, steep, xpxl2, ypxl2, _rfpart(y_end) * x_gap)
-    _plot(pixels, steep, xpxl2, ypxl2 + 1, _fpart(y_end) * x_gap)
+    _plot(pixels, steep, xpxl2, ypxl2 + 1, _fpart(y_end) * x_gap)  # noqa: match opening endpoint
     return [(x, y, alpha) for x, y, alpha in pixels if alpha > 0]
 
 
