@@ -49,6 +49,71 @@ class FlowchartShape:
                 t = index / 11
                 wave.append((x + w * (1 - t), y + h - 8 * math.sin(math.pi * 2 * t)))
             points = [(x, y), (x + w, y), (x + w, y + h - 6)] + wave + [(x, y + h)]
+        # ── General geometric shapes ──────────────────────────────────
+        elif self.kind in ("circle", "ellipse"):
+            cx, cy = x + w / 2, y + h / 2
+            points = [
+                (cx + math.cos(2 * math.pi * i / segments) * w / 2,
+                 cy + math.sin(2 * math.pi * i / segments) * h / 2)
+                for i in range(segments)
+            ]
+        elif self.kind == "star5":
+            cx, cy = x + w / 2, y + h / 2
+            outer_r_x, outer_r_y = w / 2, h / 2
+            inner_r_x, inner_r_y = w / 4.5, h / 4.5
+            pts = []
+            for i in range(10):
+                angle = math.pi / 2 + i * math.pi / 5  # start from top
+                rx, ry = (outer_r_x, outer_r_y) if i % 2 == 0 else (inner_r_x, inner_r_y)
+                pts.append((cx + math.cos(angle) * rx, cy - math.sin(angle) * ry))
+            points = pts
+        elif self.kind == "hexagon":
+            cx, cy = x + w / 2, y + h / 2
+            points = [
+                (cx + math.cos(math.pi / 2 + i * math.pi / 3) * w / 2,
+                 cy + math.sin(math.pi / 2 + i * math.pi / 3) * h / 2)
+                for i in range(6)
+            ]
+        elif self.kind == "arrow_right":
+            stem_y1, stem_y2 = y + h * 0.3, y + h * 0.7
+            head_x = x + w * 0.6
+            points = [
+                (x, stem_y1), (head_x, stem_y1), (head_x, y),
+                (x + w, y + h / 2),
+                (head_x, y + h), (head_x, stem_y2), (x, stem_y2),
+            ]
+        elif self.kind == "cloud":
+            # Approximate cloud with overlapping arcs via polygon
+            cx, cy = x + w / 2, y + h / 2
+            bumps = [
+                (cx - w * 0.3, cy - h * 0.1, w * 0.22, h * 0.28),
+                (cx,           cy - h * 0.2, w * 0.26, h * 0.32),
+                (cx + w * 0.3, cy - h * 0.1, w * 0.22, h * 0.28),
+                (cx + w * 0.42, cy + h * 0.12, w * 0.18, h * 0.24),
+                (cx - w * 0.42, cy + h * 0.12, w * 0.18, h * 0.24),
+            ]
+            pts = []
+            for bx, by, brx, bry in bumps:
+                for i in range(10):
+                    a = -math.pi / 2 + i * math.pi / 9
+                    pts.append((bx + math.cos(a) * brx, by + math.sin(a) * bry))
+            # convex hull approximation: just use the points, renderer fills via scanline
+            points = pts
+        # ── Org chart ────────────────────────────────────────────────
+        elif self.kind == "org_box":
+            r = min(w * 0.12, h * 0.25, 16)
+            pts = []
+            for corner_x, corner_y, a_start in [
+                (x + r, y + r, math.pi), (x + w - r, y + r, -math.pi / 2),
+                (x + w - r, y + h - r, 0), (x + r, y + h - r, math.pi / 2),
+            ]:
+                for i in range(7):
+                    a = a_start + i * math.pi / 12
+                    pts.append((corner_x + math.cos(a) * r, corner_y + math.sin(a) * r))
+            points = pts
+        # ── Circuit symbols (outline = bounding rect for hit-test; visuals in extra_segments) ──
+        elif self.kind in ("resistor", "capacitor", "ground", "battery", "switch", "led", "inductor", "voltage_source"):
+            points = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
         else:
             points = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
         matrix = self._local_matrix()
@@ -56,12 +121,100 @@ class FlowchartShape:
 
     def extra_segments(self) -> list[tuple[tuple[float, float], tuple[float, float]]]:
         x, y, w, h = self.x, self.y, self.width, self.height
+        cx, cy = x + w / 2, y + h / 2
         segs: list[tuple[tuple[float, float], tuple[float, float]]] = []
         if self.kind == "subprocess":
             margin = min(18, w / 5)
             segs.extend([((x + margin, y), (x + margin, y + h)), ((x + w - margin, y), (x + w - margin, y + h))])
         elif self.kind == "database":
             segs.extend([((x, y + h * 0.22), (x, y + h * 0.82)), ((x + w, y + h * 0.22), (x + w, y + h * 0.82))])
+        elif self.kind == "resistor":
+            # Two lead wires + rectangle body
+            bx1, bx2 = x + w * 0.2, x + w * 0.8
+            by1, by2 = y + h * 0.25, y + h * 0.75
+            segs += [
+                ((x, cy), (bx1, cy)),       # left lead
+                ((bx2, cy), (x + w, cy)),   # right lead
+                ((bx1, by1), (bx2, by1)),   # top of body
+                ((bx2, by1), (bx2, by2)),   # right of body
+                ((bx2, by2), (bx1, by2)),   # bottom of body
+                ((bx1, by2), (bx1, by1)),   # left of body
+            ]
+        elif self.kind == "capacitor":
+            gap = h * 0.12
+            segs += [
+                ((x, cy), (cx - gap, cy)),          # left lead
+                ((cx + gap, cy), (x + w, cy)),      # right lead
+                ((cx - gap, y + h * 0.1), (cx - gap, y + h * 0.9)),  # left plate
+                ((cx + gap, y + h * 0.1), (cx + gap, y + h * 0.9)),  # right plate
+            ]
+        elif self.kind == "ground":
+            segs += [
+                ((cx, y), (cx, cy)),                                        # vertical wire
+                ((cx - w * 0.4, cy), (cx + w * 0.4, cy)),                  # top bar (widest)
+                ((cx - w * 0.27, cy + h * 0.2), (cx + w * 0.27, cy + h * 0.2)),  # mid bar
+                ((cx - w * 0.14, cy + h * 0.4), (cx + w * 0.14, cy + h * 0.4)),  # bottom bar
+            ]
+        elif self.kind == "battery":
+            # alternating long/short vertical bars + leads
+            bar_xs = [cx - w * 0.2, cx - w * 0.07, cx + w * 0.07, cx + w * 0.2]
+            heights = [h * 0.6, h * 0.35, h * 0.6, h * 0.35]
+            segs += [((x, cy), (bar_xs[0], cy)), ((bar_xs[-1], cy), (x + w, cy))]
+            for bx, bh in zip(bar_xs, heights):
+                segs.append(((bx, cy - bh / 2), (bx, cy + bh / 2)))
+        elif self.kind == "switch":
+            # two terminals + open switch arm
+            segs += [
+                ((x, cy), (x + w * 0.3, cy)),              # left terminal wire
+                ((x + w * 0.7, cy), (x + w, cy)),          # right terminal wire
+                ((x + w * 0.3, cy), (x + w * 0.7, cy - h * 0.35)),  # switch arm (open)
+                # terminal dots (short cross marks)
+                ((x + w * 0.3, cy - h * 0.08), (x + w * 0.3, cy + h * 0.08)),
+                ((x + w * 0.7, cy - h * 0.08), (x + w * 0.7, cy + h * 0.08)),
+            ]
+        elif self.kind == "led":
+            # triangle (diode) + vertical bar + two emission arrows
+            tip_x = cx + w * 0.15
+            base_x = cx - w * 0.15
+            segs += [
+                ((x, cy), (base_x, cy)),                    # left lead
+                ((tip_x, cy), (x + w, cy)),                 # right lead
+                ((base_x, y + h * 0.2), (base_x, y + h * 0.8)),  # base vertical
+                ((base_x, y + h * 0.2), (tip_x, cy)),      # triangle top edge
+                ((base_x, y + h * 0.8), (tip_x, cy)),      # triangle bottom edge
+                ((tip_x, y + h * 0.2), (tip_x, y + h * 0.8)),    # cathode bar
+                # emission arrows (diagonal lines suggesting light)
+                ((tip_x + w * 0.06, y + h * 0.15), (tip_x + w * 0.18, y + h * 0.02)),
+                ((tip_x + w * 0.12, y + h * 0.22), (tip_x + w * 0.24, y + h * 0.09)),
+            ]
+        elif self.kind == "inductor":
+            # coil: sequence of semi-arc bumps as line approximations
+            coils = 4
+            coil_w = w * 0.6 / coils
+            start_x = cx - w * 0.3
+            arc_pts = []
+            for i in range(coils):
+                bx = start_x + i * coil_w + coil_w / 2
+                for j in range(9):
+                    a = math.pi - j * math.pi / 8
+                    arc_pts.append((bx + math.cos(a) * coil_w / 2, cy - math.sin(a) * h * 0.3))
+            for a_pt, b_pt in zip(arc_pts, arc_pts[1:]):
+                segs.append((a_pt, b_pt))
+            segs += [((x, cy), (start_x, cy)), ((start_x + coils * coil_w, cy), (x + w, cy))]
+        elif self.kind == "voltage_source":
+            # circle + plus/minus labels inside (drawn as cross lines)
+            r = min(w, h) * 0.38
+            # circle approximated via extra_segments not possible directly;
+            # draw plus on right half and minus on left half
+            segs += [
+                ((x, cy), (cx - r, cy)),         # left lead
+                ((cx + r, cy), (x + w, cy)),     # right lead
+                # plus sign (right side)
+                ((cx + r * 0.4, cy), (cx + r * 0.8, cy)),
+                ((cx + r * 0.6, cy - r * 0.2), (cx + r * 0.6, cy + r * 0.2)),
+                # minus sign (left side)
+                ((cx - r * 0.8, cy), (cx - r * 0.4, cy)),
+            ]
         matrix = self._local_matrix()
         return [(_mat_apply(matrix, *a), _mat_apply(matrix, *b)) for a, b in segs]
 

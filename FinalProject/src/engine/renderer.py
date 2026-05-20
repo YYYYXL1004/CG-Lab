@@ -29,6 +29,7 @@ class Renderer:
         selected_ids: set[str] | None = None,
         show_grid: bool = True,
         draft: bool = False,
+        guides: list[tuple[str, float]] | None = None,
     ) -> Image.Image:
         image = Image.new("RGBA", (self.width, self.height), _color(document.background))
         pixels = image.load()
@@ -40,6 +41,8 @@ class Renderer:
             self._draw_connector(pixels, document, connector, zoom, pan)
         if selected_ids:
             self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan)
+        if guides:
+            self._draw_guides(pixels, guides, zoom, pan)
         return image
 
     def _draw_grid(self, pixels, grid_size: int, zoom: float, pan: tuple[float, float]) -> None:
@@ -105,6 +108,16 @@ class Renderer:
         for x, y in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]:
             _fill_polygon(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3)], "#1E1E2E")
             _draw_polyline(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3), (x - 3, y - 3)], "#5BA8FF")
+
+    def _draw_guides(self, pixels, guides: list[tuple[str, float]], zoom: float, pan: tuple[float, float]) -> None:
+        guide_color = "#FF4444"
+        for kind, value in guides:
+            if kind == "vline":
+                sx = round(value * zoom + pan[0])
+                _draw_line(pixels, (sx, 0), (sx, self.height - 1), guide_color, 1)
+            elif kind == "hline":
+                sy = round(value * zoom + pan[1])
+                _draw_line(pixels, (0, sy), (self.width - 1, sy), guide_color, 1)
 
     def _draw_selection_overlay(self, pixels, document: Document, selected_ids: set[str], zoom: float, pan: tuple[float, float]) -> None:
         bounds = [shape.bounds() for shape in document.shapes if shape.id in selected_ids]

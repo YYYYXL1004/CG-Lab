@@ -10,6 +10,7 @@ from core.document import Document
 from core.shapes import ConnectorShape, FlowchartShape, LineShape, TextShape
 from core.style import ShapeStyle
 from engine.command import History
+from engine.guides import compute_guides
 from engine.renderer import Renderer
 from engine.selection import apply_group_resize, bounds_from_handle, handle_at, selection_bounds, shapes_in_rect
 from io_utils.serializer import load_document, save_document
@@ -68,6 +69,7 @@ class VectorFlowApp(tk.Tk):
 
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
+        self._guides: list[tuple[str, float]] = []
 
         self._configure_style()
         self._build_menu()
@@ -144,14 +146,42 @@ class VectorFlowApp(tk.Tk):
         main = ttk.Frame(self)
         main.pack(fill=tk.BOTH, expand=True)
 
-        self.library = ttk.Frame(main, width=150)
-        self.library.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Label(self.library, text="流程图图元").pack(anchor=tk.W, padx=10, pady=(10, 6))
-        for text, kind in [
+        lib_container = ttk.Frame(main, width=150)
+        lib_container.pack(side=tk.LEFT, fill=tk.Y)
+        lib_container.pack_propagate(False)
+        self.library = ttk.Notebook(lib_container)
+        self.library.pack(fill=tk.BOTH, expand=True)
+
+        def _lib_tab(title: str, items: list[tuple[str, str]]) -> None:
+            frame = ttk.Frame(self.library)
+            self.library.add(frame, text=title)
+            canvas_inner = tk.Canvas(frame, bg="#252535", highlightthickness=0)
+            scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_inner.yview)
+            canvas_inner.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            inner = ttk.Frame(canvas_inner)
+            canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
+            for text, kind in items:
+                ttk.Button(inner, text=text, command=lambda k=kind: self.pick_flow_shape(k)).pack(fill=tk.X, padx=6, pady=2)
+            inner.update_idletasks()
+            canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
+            inner.bind("<Configure>", lambda e: canvas_inner.configure(scrollregion=canvas_inner.bbox("all")))
+
+        _lib_tab("流程图", [
             ("处理框", "process"), ("判断框", "decision"), ("起止框", "terminal"),
             ("数据框", "data"), ("文档框", "document"), ("数据库", "database"), ("子程序", "subprocess"),
-        ]:
-            ttk.Button(self.library, text=text, command=lambda k=kind: self.pick_flow_shape(k)).pack(fill=tk.X, padx=10, pady=3)
+        ])
+        _lib_tab("通用图形", [
+            ("圆形", "circle"), ("椭圆", "ellipse"), ("五角星", "star5"),
+            ("六边形", "hexagon"), ("右箭头", "arrow_right"), ("云形", "cloud"),
+            ("圆角矩形", "org_box"),
+        ])
+        _lib_tab("电路图", [
+            ("电阻", "resistor"), ("电容", "capacitor"), ("接地", "ground"),
+            ("电池", "battery"), ("开关", "switch"), ("LED", "led"),
+            ("电感", "inductor"), ("电压源", "voltage_source"),
+        ])
 
         canvas_frame = ttk.Frame(main)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -213,7 +243,7 @@ class VectorFlowApp(tk.Tk):
         height = max(1, self.canvas.winfo_height())
         if self.renderer is None or self.renderer.width != width or self.renderer.height != height:
             self.renderer = Renderer(width, height)
-        image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft)
+        image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft, guides=self._guides or None)
         self.photo = ImageTk.PhotoImage(image)
         self.canvas.delete("render")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="render")
@@ -303,6 +333,12 @@ class VectorFlowApp(tk.Tk):
             self.document.move_shapes(list(self.selected_ids), dx, dy)
             self.drag_total_delta = (self.drag_total_delta[0] + dx, self.drag_total_delta[1] + dy)
             self.drag_shape_origin = current
+            guides, snap_dx, snap_dy = compute_guides(self.selected_ids, self.document.shapes)
+            if snap_dx or snap_dy:
+                self.document.move_shapes(list(self.selected_ids), snap_dx, snap_dy)
+                self.drag_shape_origin = (current[0] + snap_dx, current[1] + snap_dy)
+                self.drag_total_delta = (self.drag_total_delta[0] + snap_dx, self.drag_total_delta[1] + snap_dy)
+            self._guides = guides
             self.redraw(draft=True)
         elif tool == "select" and self.drag_mode == "resize" and self.resize_handle:
             new_bounds = bounds_from_handle(self.resize_original_bounds, self.resize_handle, current)
@@ -332,6 +368,7 @@ class VectorFlowApp(tk.Tk):
             return
         current = self.screen_to_world(event.x, event.y)
         tool = self.current_tool.get()
+        self._guides = []  # clear alignment guides on mouse release
 
         if tool == "line":
             self.document.add_shape(LineShape(self.drag_start[0], self.drag_start[1], current[0], current[1]))
@@ -408,8 +445,27 @@ class VectorFlowApp(tk.Tk):
     # ── Shape creation ──────────────────────────────────────────────
 
     def place_flow_shape(self, x: float, y: float) -> None:
-        dims = {"decision": (140, 100), "terminal": (150, 70), "database": (150, 90), "document": (160, 90), "data": (160, 70)}
-        labels = {"process": "处理", "decision": "判断", "terminal": "开始/结束", "data": "数据", "document": "文档", "database": "数据库", "subprocess": "子程序"}
+        dims = {
+            "decision": (140, 100), "terminal": (150, 70), "database": (150, 90),
+            "document": (160, 90), "data": (160, 70),
+            # General shapes
+            "circle": (100, 100), "ellipse": (140, 90), "star5": (100, 100),
+            "hexagon": (110, 100), "arrow_right": (140, 80), "cloud": (150, 100),
+            # Org chart
+            "org_box": (160, 70),
+            # Circuit symbols
+            "resistor": (120, 60), "capacitor": (80, 70), "ground": (80, 80),
+            "battery": (120, 60), "switch": (120, 60), "led": (120, 70),
+            "inductor": (120, 60), "voltage_source": (80, 80),
+        }
+        labels = {
+            "process": "处理", "decision": "判断", "terminal": "开始/结束",
+            "data": "数据", "document": "文档", "database": "数据库", "subprocess": "子程序",
+            "circle": "", "ellipse": "", "star5": "", "hexagon": "", "arrow_right": "",
+            "cloud": "", "org_box": "部门",
+            "resistor": "R", "capacitor": "C", "ground": "", "battery": "",
+            "switch": "", "led": "", "inductor": "L", "voltage_source": "V",
+        }
         w, h = dims.get(self.pending_flow_kind, (160, 70))
         shape = FlowchartShape(
             self.pending_flow_kind, x - w / 2, y - h / 2, w, h,
