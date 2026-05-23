@@ -15,6 +15,11 @@ from core.shapes import ConnectorShape, FlowchartShape, LineShape, TextShape
 
 Color = tuple[int, int, int, int]
 
+CIRCUIT_KINDS = {
+    "resistor", "capacitor", "ground", "battery",
+    "switch", "led", "inductor", "voltage_source",
+}
+
 
 class Renderer:
     def __init__(self, width: int, height: int):
@@ -57,9 +62,11 @@ class Renderer:
     def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
         if isinstance(shape, FlowchartShape):
             points = [self._world_to_screen(point, zoom, pan) for point in shape.outline_points()]
-            if not draft:
+            is_circuit = shape.kind in CIRCUIT_KINDS
+            if not draft and not is_circuit:
                 _fill_polygon(pixels, points, shape.style.fill)
-            _draw_polyline(pixels, points + [points[0]], shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
+            if not is_circuit:
+                _draw_polyline(pixels, points + [points[0]], shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
             for a, b in shape.extra_segments():
                 _draw_line(pixels, self._world_to_screen(a, zoom, pan), self._world_to_screen(b, zoom, pan), shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)))
             if shape.kind == "database":
@@ -69,6 +76,11 @@ class Renderer:
                 ry = max(4, (y2 - y1) * 0.14)
                 for cy in (y1 + ry, y2 - ry):
                     _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), rx * zoom, ry * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
+            elif shape.kind == "voltage_source":
+                x1, y1, x2, y2 = shape.bounds()
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                r = min(x2 - x1, y2 - y1) * 0.38
+                _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), r * zoom, r * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
             if shape.text:
                 self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
         elif isinstance(shape, LineShape):

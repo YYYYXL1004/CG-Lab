@@ -149,9 +149,30 @@ class VectorFlowApp(tk.Tk):
         main = ttk.Frame(self)
         main.pack(fill=tk.BOTH, expand=True)
 
-        lib_container = ttk.Frame(main, width=150)
+        # 左侧侧边栏，支持拖动调整宽度
+        self._sidebar_width = 180
+        lib_container = ttk.Frame(main, width=self._sidebar_width)
         lib_container.pack(side=tk.LEFT, fill=tk.Y)
         lib_container.pack_propagate(False)
+
+        # 拖动调整宽度的分隔条
+        sash = tk.Frame(main, width=5, bg="#3A3A50", cursor="sb_h_double_arrow")
+        sash.pack(side=tk.LEFT, fill=tk.Y)
+
+        def _sash_press(event):
+            sash._drag_x = event.x_root
+            sash._drag_w = lib_container.winfo_width()
+
+        def _sash_drag(event):
+            delta = event.x_root - sash._drag_x
+            new_w = max(120, min(400, sash._drag_w + delta))
+            lib_container.configure(width=new_w)
+
+        sash.bind("<ButtonPress-1>", _sash_press)
+        sash.bind("<B1-Motion>", _sash_drag)
+        sash.bind("<Enter>", lambda e: sash.configure(bg="#5BA8FF"))
+        sash.bind("<Leave>", lambda e: sash.configure(bg="#3A3A50"))
+
         self.library = ttk.Notebook(lib_container)
         self.library.pack(fill=tk.BOTH, expand=True)
 
@@ -164,21 +185,38 @@ class VectorFlowApp(tk.Tk):
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             inner = ttk.Frame(canvas_inner)
-            canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
+            win_id = canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
             for text, kind in items:
-                ttk.Button(inner, text=text, command=lambda k=kind: self.pick_flow_shape(k)).pack(fill=tk.X, padx=6, pady=2)
+                btn = ttk.Button(inner, text=text, command=lambda k=kind: self.pick_flow_shape(k))
+                btn.pack(fill=tk.X, padx=4, pady=2)
             inner.update_idletasks()
             canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
-            inner.bind("<Configure>", lambda e: canvas_inner.configure(scrollregion=canvas_inner.bbox("all")))
+
+            def _on_inner_configure(e):
+                canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
+                canvas_inner.itemconfigure(win_id, width=canvas_inner.winfo_width())
+
+            def _on_canvas_configure(e):
+                canvas_inner.itemconfigure(win_id, width=e.width)
+
+            inner.bind("<Configure>", _on_inner_configure)
+            canvas_inner.bind("<Configure>", _on_canvas_configure)
+
+            # 鼠标滚轮支持
+            def _on_mousewheel(e):
+                canvas_inner.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            canvas_inner.bind("<MouseWheel>", _on_mousewheel)
+            inner.bind("<MouseWheel>", _on_mousewheel)
 
         _lib_tab("流程图", [
             ("处理框", "process"), ("判断框", "decision"), ("起止框", "terminal"),
             ("数据框", "data"), ("文档框", "document"), ("数据库", "database"), ("子程序", "subprocess"),
         ])
         _lib_tab("通用图形", [
-            ("圆形", "circle"), ("椭圆", "ellipse"), ("五角星", "star5"),
-            ("六边形", "hexagon"), ("右箭头", "arrow_right"), ("云形", "cloud"),
-            ("圆角矩形", "org_box"),
+            ("圆形", "circle"), ("椭圆", "ellipse"), ("三角形", "triangle"),
+            ("梯形", "trapezoid"), ("平行四边形", "parallelogram"), ("圆角矩形", "org_box"),
+            ("五角星", "star5"), ("六边形", "hexagon"),
+            ("右箭头", "arrow_right"), ("左箭头", "arrow_left"), ("加号", "plus"),
         ])
         _lib_tab("电路图", [
             ("电阻", "resistor"), ("电容", "capacitor"), ("接地", "ground"),
@@ -475,7 +513,10 @@ class VectorFlowApp(tk.Tk):
             "document": (160, 90), "data": (160, 70),
             # General shapes
             "circle": (100, 100), "ellipse": (140, 90), "star5": (100, 100),
-            "hexagon": (110, 100), "arrow_right": (140, 80), "cloud": (150, 100),
+            "hexagon": (110, 100), "arrow_right": (140, 80),
+            "arrow_left": (140, 80),
+            "triangle": (110, 100), "trapezoid": (140, 90),
+            "parallelogram": (150, 80), "plus": (100, 100),
             # Org chart
             "org_box": (160, 70),
             # Circuit symbols
@@ -487,7 +528,9 @@ class VectorFlowApp(tk.Tk):
             "process": "处理", "decision": "判断", "terminal": "开始/结束",
             "data": "数据", "document": "文档", "database": "数据库", "subprocess": "子程序",
             "circle": "", "ellipse": "", "star5": "", "hexagon": "", "arrow_right": "",
-            "cloud": "", "org_box": "部门",
+            "arrow_left": "",
+            "triangle": "", "trapezoid": "", "parallelogram": "", "plus": "",
+            "org_box": "",
             "resistor": "R", "capacitor": "C", "ground": "", "battery": "",
             "switch": "", "led": "", "inductor": "L", "voltage_source": "V",
         }

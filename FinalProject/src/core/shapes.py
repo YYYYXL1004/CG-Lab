@@ -82,22 +82,66 @@ class FlowchartShape:
                 (x + w, y + h / 2),
                 (head_x, y + h), (head_x, stem_y2), (x, stem_y2),
             ]
+        elif self.kind == "arrow_left":
+            stem_y1, stem_y2 = y + h * 0.3, y + h * 0.7
+            head_x = x + w * 0.4
+            points = [
+                (x + w, stem_y1), (head_x, stem_y1), (head_x, y),
+                (x, y + h / 2),
+                (head_x, y + h), (head_x, stem_y2), (x + w, stem_y2),
+            ]
+        elif self.kind == "triangle":
+            points = [(x + w / 2, y), (x + w, y + h), (x, y + h)]
+        elif self.kind == "trapezoid":
+            inset = min(w * 0.18, 30)
+            points = [(x + inset, y), (x + w - inset, y), (x + w, y + h), (x, y + h)]
+        elif self.kind == "parallelogram":
+            slant = min(w * 0.22, 36)
+            points = [(x + slant, y), (x + w, y), (x + w - slant, y + h), (x, y + h)]
+        elif self.kind == "plus":
+            arm_w = w / 3
+            arm_h = h / 3
+            cx, cy = x + w / 2, y + h / 2
+            points = [
+                (cx - arm_w / 2, y),
+                (cx + arm_w / 2, y),
+                (cx + arm_w / 2, cy - arm_h / 2),
+                (x + w, cy - arm_h / 2),
+                (x + w, cy + arm_h / 2),
+                (cx + arm_w / 2, cy + arm_h / 2),
+                (cx + arm_w / 2, y + h),
+                (cx - arm_w / 2, y + h),
+                (cx - arm_w / 2, cy + arm_h / 2),
+                (x, cy + arm_h / 2),
+                (x, cy - arm_h / 2),
+                (cx - arm_w / 2, cy - arm_h / 2),
+            ]
         elif self.kind == "cloud":
-            # Approximate cloud with overlapping arcs via polygon
+            # Scalloped boundary: bumps walk clockwise around the cloud, each
+            # contributing its outward-facing arc so the polygon is closed.
             cx, cy = x + w / 2, y + h / 2
             bumps = [
-                (cx - w * 0.3, cy - h * 0.1, w * 0.22, h * 0.28),
-                (cx,           cy - h * 0.2, w * 0.26, h * 0.32),
-                (cx + w * 0.3, cy - h * 0.1, w * 0.22, h * 0.28),
-                (cx + w * 0.42, cy + h * 0.12, w * 0.18, h * 0.24),
-                (cx - w * 0.42, cy + h * 0.12, w * 0.18, h * 0.24),
+                (-0.30, -0.20, 0.22, 0.26),
+                (-0.05, -0.32, 0.22, 0.28),
+                ( 0.22, -0.26, 0.22, 0.26),
+                ( 0.38,  0.00, 0.16, 0.22),
+                ( 0.22,  0.26, 0.20, 0.22),
+                (-0.05,  0.30, 0.22, 0.22),
+                (-0.28,  0.24, 0.20, 0.22),
+                (-0.40, -0.02, 0.16, 0.22),
             ]
+            arc_sweep = math.pi * 1.15
+            arc_steps = 9
             pts = []
-            for bx, by, brx, bry in bumps:
-                for i in range(10):
-                    a = -math.pi / 2 + i * math.pi / 9
+            for ox, oy, rx_ratio, ry_ratio in bumps:
+                bx = cx + ox * w
+                by = cy + oy * h
+                brx = rx_ratio * w
+                bry = ry_ratio * h
+                outward = math.atan2(oy, ox)
+                for i in range(arc_steps + 1):
+                    a = outward - arc_sweep / 2 + i * arc_sweep / arc_steps
                     pts.append((bx + math.cos(a) * brx, by + math.sin(a) * bry))
-            # convex hull approximation: just use the points, renderer fills via scanline
             points = pts
         # ── Org chart ────────────────────────────────────────────────
         elif self.kind == "org_box":
