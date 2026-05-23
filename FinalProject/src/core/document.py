@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from algorithms.bezier import cubic_bezier
-from core.shapes import ConnectorShape, FlowchartShape, LineShape, Shape, new_id, shape_from_dict
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, Shape, new_id, shape_from_dict
 
 
 @dataclass
@@ -138,6 +138,8 @@ class Document:
 def _new_like_id(shape: Shape) -> str:
     if isinstance(shape, LineShape):
         return new_id("line")
+    if isinstance(shape, CurveShape):
+        return new_id("curve")
     return new_id("shape")
 
 

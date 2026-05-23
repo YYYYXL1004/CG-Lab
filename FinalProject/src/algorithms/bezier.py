@@ -44,3 +44,34 @@ def _adaptive_steps(*points: PointTuple) -> int:
 
 def _distance(a: PointTuple, b: PointTuple) -> float:
     return ((float(a[0]) - float(b[0])) ** 2 + (float(a[1]) - float(b[1])) ** 2) ** 0.5
+
+
+def catmull_rom_polyline(
+    points: list[PointTuple],
+    steps_per_segment: int | None = None,
+) -> list[tuple[int, int]]:
+    """Smooth a polyline of sample points by piecewise Catmull-Rom → cubic Bezier.
+
+    The curve passes through every input point. Endpoints are clamped by
+    duplicating the first/last point as virtual neighbors.
+    """
+    n = len(points)
+    if n < 2:
+        return [(round(x), round(y)) for x, y in points]
+    if n == 2:
+        return [(round(points[0][0]), round(points[0][1])),
+                (round(points[1][0]), round(points[1][1]))]
+    result: list[tuple[int, int]] = []
+    for i in range(n - 1):
+        p0 = points[i - 1] if i > 0 else points[i]
+        p1 = points[i]
+        p2 = points[i + 1]
+        p3 = points[i + 2] if i + 2 < n else points[i + 1]
+        b1 = (p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0)
+        b2 = (p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0)
+        segment = cubic_bezier(p1, b1, b2, p2, steps=steps_per_segment)
+        if result and result[-1] == segment[0]:
+            result.extend(segment[1:])
+        else:
+            result.extend(segment)
+    return result

@@ -421,6 +421,86 @@ class LineShape:
 
 
 @dataclass
+class CurveShape:
+    points: list[tuple[float, float]] = field(default_factory=list)
+    style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
+    id: str = field(default_factory=lambda: new_id("curve"))
+    z_order: int = 0
+
+    def move(self, dx: float, dy: float) -> None:
+        self.points = [(x + dx, y + dy) for x, y in self.points]
+
+    def center(self) -> Point:
+        x1, y1, x2, y2 = self.bounds()
+        return Point((x1 + x2) / 2, (y1 + y2) / 2)
+
+    def scale(self, factor: float) -> None:
+        c = self.center()
+        self.points = [(c.x + (x - c.x) * factor, c.y + (y - c.y) * factor) for x, y in self.points]
+
+    def rotate(self, angle_degrees: float) -> None:
+        c = self.center()
+        m = Matrix3.rotation(math.radians(angle_degrees), center=c)
+        new_pts = []
+        for x, y in self.points:
+            p = m.apply(Point(x, y))
+            new_pts.append((p.x, p.y))
+        self.points = new_pts
+
+    def flip_horizontal(self) -> None:
+        c = self.center()
+        self.points = [(c.x - (x - c.x), y) for x, y in self.points]
+
+    def flip_vertical(self) -> None:
+        c = self.center()
+        self.points = [(x, c.y - (y - c.y)) for x, y in self.points]
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        if not self.points:
+            return 0.0, 0.0, 0.0, 0.0
+        xs = [p[0] for p in self.points]
+        ys = [p[1] for p in self.points]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def hit_test(self, x: float, y: float) -> bool:
+        from algorithms.bezier import catmull_rom_polyline
+        if len(self.points) < 2:
+            return False
+        sampled = catmull_rom_polyline(self.points, steps_per_segment=10)
+        for a, b in zip(sampled, sampled[1:]):
+            if _point_segment_distance(x, y, a[0], a[1], b[0], b[1]) <= 7:
+                return True
+        return False
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": "curve",
+            "points": [[p[0], p[1]] for p in self.points],
+            "style": self.style.to_dict(),
+            "z_order": self.z_order,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "CurveShape":
+        raw = payload.get("points")
+        if raw is None:
+            # Backward compat with the previous 4-control-point format.
+            raw = [
+                [payload["x0"], payload["y0"]],
+                [payload["x1"], payload["y1"]],
+                [payload["x2"], payload["y2"]],
+                [payload["x3"], payload["y3"]],
+            ]
+        return cls(
+            points=[(float(p[0]), float(p[1])) for p in raw],
+            style=ShapeStyle.from_dict(payload.get("style")),
+            id=payload.get("id", new_id("curve")),
+            z_order=int(payload.get("z_order", 0)),
+        )
+
+
+@dataclass
 class TextShape:
     x: float
     y: float
@@ -510,7 +590,7 @@ class ConnectorShape:
         )
 
 
-Shape = FlowchartShape | LineShape | TextShape
+Shape = FlowchartShape | LineShape | CurveShape | TextShape
 
 
 def shape_from_dict(payload: dict) -> Shape:
@@ -519,6 +599,8 @@ def shape_from_dict(payload: dict) -> Shape:
         return FlowchartShape.from_dict(payload)
     if shape_type == "line":
         return LineShape.from_dict(payload)
+    if shape_type == "curve":
+        return CurveShape.from_dict(payload)
     if shape_type == "text":
         return TextShape.from_dict(payload)
     raise ValueError(f"Unsupported shape type: {shape_type!r}")

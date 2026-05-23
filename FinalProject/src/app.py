@@ -6,8 +6,9 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from PIL import ImageTk
 
+from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
 from core.style import ShapeStyle
 from engine.command import History
 from engine.guides import compute_guides
@@ -73,6 +74,7 @@ class VectorFlowApp(tk.Tk):
         self._space_held: bool = False
         self._space_pan_start: tuple[int, int] | None = None
         self._space_pan_origin: tuple[float, float] | None = None
+        self._freehand_points: list[tuple[float, float]] = []
 
         self._configure_style()
         self._build_menu()
@@ -132,7 +134,7 @@ class VectorFlowApp(tk.Tk):
     def _build_layout(self) -> None:
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
-        for label, tool in [("选择(V)", "select"), ("直线(L)", "line"), ("文本(T)", "text"), ("连接线(K)", "connector"), ("区域导出", "region_export")]:
+        for label, tool in [("选择(V)", "select"), ("直线(L)", "line"), ("曲线(C)", "curve"), ("文本(T)", "text"), ("连接线(K)", "connector"), ("区域导出", "region_export")]:
             ttk.Button(top, text=label, style="Tool.TButton", command=lambda t=tool: self.set_tool(t)).pack(side=tk.LEFT, padx=2, pady=4)
         self.undo_btn = ttk.Button(top, text="撤销", command=self.undo)
         self.undo_btn.pack(side=tk.LEFT, padx=2)
@@ -255,7 +257,7 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-v>", lambda _e: self.paste_selection())
         self.bind("<Delete>", lambda _e: self.delete_selection())
         self.bind("<Escape>", lambda _e: self.clear_selection())
-        for key, tool in [("v", "select"), ("l", "line"), ("t", "text"), ("k", "connector")]:
+        for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("t", "text"), ("k", "connector")]:
             self.bind(key, lambda _e, t=tool: self.set_tool(t))
         self.bind("<KeyPress-space>", self.on_space_down)
         self.bind("<KeyRelease-space>", self.on_space_up)
@@ -273,6 +275,9 @@ class VectorFlowApp(tk.Tk):
         self._commit_inline_editor()
         self.current_tool.set(tool)
         self.connector_start_id = None
+        if self._freehand_points:
+            self._freehand_points = []
+            self.canvas.delete("preview")
         self.status_text.set(f"当前工具: {tool}")
 
     def pick_flow_shape(self, kind: str) -> None:
@@ -374,6 +379,10 @@ class VectorFlowApp(tk.Tk):
         elif tool == "line":
             pass
 
+        elif tool == "curve":
+            self._freehand_points = [self.drag_start]
+            self.drag_mode = "curve_trace"
+
     def on_left_drag(self, event) -> None:
         if self.drag_start is None:
             return
@@ -407,7 +416,13 @@ class VectorFlowApp(tk.Tk):
             x0, y0 = self.world_to_screen(self.drag_start)
             x1, y1 = event.x, event.y
             self.canvas.create_line(x0, y0, x1, y1, fill="#A7C7FF", dash=(6, 3), width=2, arrow=tk.LAST, tags="preview")
-        elif tool in {"line", "region_export"}:
+        elif tool in {"line", "region_export", "curve"}:
+            if tool == "curve":
+                last = self._freehand_points[-1] if self._freehand_points else self.drag_start
+                if (current[0] - last[0]) ** 2 + (current[1] - last[1]) ** 2 >= 9:
+                    self._freehand_points.append(current)
+                self._render_freehand_preview()
+                return
             self.canvas.delete("preview")
             x0, y0 = self.world_to_screen(self.drag_start)
             x1, y1 = self.world_to_screen(current)
@@ -428,6 +443,20 @@ class VectorFlowApp(tk.Tk):
             self._push_history()
             self.canvas.delete("preview")
             self.redraw()
+        elif tool == "curve":
+            pts = list(self._freehand_points)
+            if pts and pts[-1] != current:
+                pts.append(current)
+            self._freehand_points = []
+            self.canvas.delete("preview")
+            if len(pts) >= 2:
+                self.document.add_shape(CurveShape(
+                    points=pts,
+                    style=ShapeStyle(stroke=self.stroke_color.get(), fill=None, stroke_width=self.stroke_width.get()),
+                ))
+                self._push_history()
+                self.redraw()
+                self.status_text.set(f"曲线已创建（{len(pts)} 个采样点）")
         elif tool == "region_export":
             self.canvas.delete("preview")
             self._do_region_export(self.drag_start, current)
@@ -543,6 +572,18 @@ class VectorFlowApp(tk.Tk):
         self.document.add_shape(shape)
         self.selected_ids = {shape.id}
         self.redraw()
+
+    def _render_freehand_preview(self) -> None:
+        if len(self._freehand_points) < 2:
+            return
+        smoothed = catmull_rom_polyline(self._freehand_points)
+        flat: list[float] = []
+        for px, py in smoothed:
+            sx, sy = self.world_to_screen((px, py))
+            flat.extend((sx, sy))
+        self.canvas.delete("preview")
+        if len(flat) >= 4:
+            self.canvas.create_line(*flat, fill="#5BFFCF", width=2, tags="preview")
 
     def best_anchor_pair(self, start: FlowchartShape, end: FlowchartShape) -> tuple[str, str]:
         sx, sy = start.center().x, start.center().y
@@ -786,6 +827,10 @@ class VectorFlowApp(tk.Tk):
         self._commit_inline_editor()
         self.selected_ids.clear()
         self.connector_start_id = None
+        if self._freehand_points:
+            self._freehand_points = []
+            self.canvas.delete("preview")
+            self.status_text.set("已取消曲线绘制")
         self.redraw()
 
     # ── Undo / Redo ─────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.document import Document
-from core.shapes import FlowchartShape, LineShape, TextShape, shape_from_dict
+from core.shapes import CurveShape, FlowchartShape, LineShape, TextShape, shape_from_dict
 
 
 Bounds = tuple[float, float, float, float]
@@ -102,6 +102,11 @@ def apply_group_resize(
         elif isinstance(shape, LineShape) and isinstance(original, LineShape):
             shape.x1, shape.y1 = _map_point((original.x1, original.y1), (ox1, oy1), (nx1, ny1), sx, sy)
             shape.x2, shape.y2 = _map_point((original.x2, original.y2), (ox1, oy1), (nx1, ny1), sx, sy)
+        elif isinstance(shape, CurveShape) and isinstance(original, CurveShape):
+            shape.points = [
+                _map_point(p, (ox1, oy1), (nx1, ny1), sx, sy)
+                for p in original.points
+            ]
         elif isinstance(shape, TextShape) and isinstance(original, TextShape):
             shape.x, shape.y = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
 
