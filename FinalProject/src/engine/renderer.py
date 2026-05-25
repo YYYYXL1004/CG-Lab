@@ -38,29 +38,35 @@ class Renderer:
         show_grid: bool = True,
         draft: bool = False,
         guides: list[tuple[str, float]] | None = None,
+        chrome: dict | None = None,
     ) -> Image.Image:
+        ch = chrome or {}
+        grid_color = ch.get("grid", "#2A2A3E")
+        sel_color = ch.get("selection", "#5BA8FF")
+        sel_handle_fill = ch.get("selection_handle_fill", "#1E1E2E")
+        guide_color = ch.get("guide", "#FF4444")
         image = Image.new("RGBA", (self.width, self.height), _color(document.background))
         pixels = image.load()
         if show_grid:
-            self._draw_grid(pixels, document.grid_size, zoom, pan)
+            self._draw_grid(pixels, document.grid_size, zoom, pan, grid_color)
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
             self._draw_shape(image, pixels, shape, zoom, pan, draft=draft)
         for connector in document.connectors:
             self._draw_connector(pixels, document, connector, zoom, pan)
         if selected_ids:
-            self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan)
+            self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan, sel_color, sel_handle_fill)
         if guides:
-            self._draw_guides(pixels, guides, zoom, pan)
+            self._draw_guides(pixels, guides, zoom, pan, guide_color)
         return image
 
-    def _draw_grid(self, pixels, grid_size: int, zoom: float, pan: tuple[float, float]) -> None:
+    def _draw_grid(self, pixels, grid_size: int, zoom: float, pan: tuple[float, float], color: str = "#2A2A3E") -> None:
         spacing = max(8, round(grid_size * zoom))
         offset_x = round(pan[0] % spacing)
         offset_y = round(pan[1] % spacing)
         for x in range(offset_x, self.width, spacing):
-            _draw_line(pixels, (x, 0), (x, self.height - 1), "#2A2A3E")
+            _draw_line(pixels, (x, 0), (x, self.height - 1), color)
         for y in range(offset_y, self.height, spacing):
-            _draw_line(pixels, (0, y), (self.width - 1, y), "#2A2A3E")
+            _draw_line(pixels, (0, y), (self.width - 1, y), color)
 
     def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
         if isinstance(shape, FlowchartShape):
@@ -129,25 +135,24 @@ class Renderer:
         if connector.arrow_start != "none":
             _draw_arrowhead(pixels, points[1], points[0], connector.style.stroke, connector.arrow_start)
 
-    def _draw_selection(self, pixels, bounds: tuple[float, float, float, float], zoom: float, pan: tuple[float, float]) -> None:
+    def _draw_selection(self, pixels, bounds: tuple[float, float, float, float], zoom: float, pan: tuple[float, float], color: str = "#5BA8FF", handle_fill: str = "#1E1E2E") -> None:
         x1, y1 = self._world_to_screen((bounds[0], bounds[1]), zoom, pan)
         x2, y2 = self._world_to_screen((bounds[2], bounds[3]), zoom, pan)
-        _draw_polyline(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)], "#5BA8FF", 1, [6, 4])
+        _draw_polyline(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)], color, 1, [6, 4])
         for x, y in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]:
-            _fill_polygon(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3)], "#1E1E2E")
-            _draw_polyline(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3), (x - 3, y - 3)], "#5BA8FF")
+            _fill_polygon(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3)], handle_fill)
+            _draw_polyline(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3), (x - 3, y - 3)], color)
 
-    def _draw_guides(self, pixels, guides: list[tuple[str, float]], zoom: float, pan: tuple[float, float]) -> None:
-        guide_color = "#FF4444"
+    def _draw_guides(self, pixels, guides: list[tuple[str, float]], zoom: float, pan: tuple[float, float], color: str = "#FF4444") -> None:
         for kind, value in guides:
             if kind == "vline":
                 sx = round(value * zoom + pan[0])
-                _draw_line(pixels, (sx, 0), (sx, self.height - 1), guide_color, 1)
+                _draw_line(pixels, (sx, 0), (sx, self.height - 1), color, 1)
             elif kind == "hline":
                 sy = round(value * zoom + pan[1])
-                _draw_line(pixels, (0, sy), (self.width - 1, sy), guide_color, 1)
+                _draw_line(pixels, (0, sy), (self.width - 1, sy), color, 1)
 
-    def _draw_selection_overlay(self, pixels, document: Document, selected_ids: set[str], zoom: float, pan: tuple[float, float]) -> None:
+    def _draw_selection_overlay(self, pixels, document: Document, selected_ids: set[str], zoom: float, pan: tuple[float, float], color: str = "#5BA8FF", handle_fill: str = "#1E1E2E") -> None:
         bounds = [shape.bounds() for shape in document.shapes if shape.id in selected_ids]
         if not bounds:
             return
@@ -157,7 +162,7 @@ class Renderer:
             max(item[2] for item in bounds),
             max(item[3] for item in bounds),
         )
-        self._draw_selection(pixels, union, zoom, pan)
+        self._draw_selection(pixels, union, zoom, pan, color, handle_fill)
 
     def _draw_text(
         self,

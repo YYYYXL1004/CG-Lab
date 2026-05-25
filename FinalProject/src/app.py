@@ -26,6 +26,64 @@ ARROW_MAP = {"▶ 实心箭头": "arrow", "▷ 空心箭头": "open_arrow", "◆
 CONN_KINDS = {"━━ 直线": "straight", "┘└ 折线": "elbow", "〰 曲线": "bezier"}
 ALIGN_MAP = {"左对齐": "left", "居中": "center", "右对齐": "right"}
 
+# 主题色板：dark 沿用 Tokyo Night Storm，light 用 GitHub Light 风格
+THEMES: dict[str, dict[str, str]] = {
+    "dark": {
+        "root_bg": "#16161E",
+        "panel_bg": "#1F2030",
+        "button_bg": "#2A2D3F",
+        "button_hover": "#3A3F58",
+        "button_pressed": "#414868",
+        "accent_bg": "#7AA2F7",
+        "accent_hover": "#9AB8F8",
+        "accent_pressed": "#5C7BD9",
+        "accent_fg": "#16161E",
+        "fg": "#C0CAF5",
+        "fg_active": "#FFFFFF",
+        "caption": "#565F89",
+        "separator": "#414868",
+        "field_bg": "#2A2D3F",
+        "canvas_bg": "#16161E",
+        "grid": "#2A2A3E",
+        "selection": "#5BA8FF",
+        "selection_handle_fill": "#1E1E2E",
+        "guide": "#FF4444",
+        "editor_bg": "#2A2D3F",
+        "editor_fg": "#C0CAF5",
+        "editor_caret": "#FFFFFF",
+        "editor_highlight": "#5BA8FF",
+        "sash_hover": "#5BA8FF",
+        "toggle_label": "☀ 浅色",
+    },
+    "light": {
+        "root_bg": "#FFFFFF",
+        "panel_bg": "#F6F8FA",
+        "button_bg": "#EAEEF2",
+        "button_hover": "#D6DCE2",
+        "button_pressed": "#B6BFC9",
+        "accent_bg": "#0969DA",
+        "accent_hover": "#1F7AED",
+        "accent_pressed": "#0851B0",
+        "accent_fg": "#FFFFFF",
+        "fg": "#1F2328",
+        "fg_active": "#000000",
+        "caption": "#656D76",
+        "separator": "#D0D7DE",
+        "field_bg": "#FFFFFF",
+        "canvas_bg": "#FCFCFD",
+        "grid": "#E5E7EB",
+        "selection": "#0969DA",
+        "selection_handle_fill": "#FFFFFF",
+        "guide": "#E11D48",
+        "editor_bg": "#FFFFFF",
+        "editor_fg": "#1F2328",
+        "editor_caret": "#000000",
+        "editor_highlight": "#0969DA",
+        "sash_hover": "#0969DA",
+        "toggle_label": "☾ 暗色",
+    },
+}
+
 
 class VectorFlowApp(tk.Tk):
     def __init__(self) -> None:
@@ -76,6 +134,11 @@ class VectorFlowApp(tk.Tk):
         self.pen_smoothness = tk.IntVar(value=3)
         self._pen_panel: tk.Toplevel | None = None
 
+        # 主题：暗色/浅色切换，session 内有效，不持久化
+        self.theme_name: str = "dark"
+        self.theme_btn_label = tk.StringVar(value=THEMES[self.theme_name]["toggle_label"])
+        self._lib_canvases: list[tk.Canvas] = []  # 侧边栏内 tk.Canvas 引用（toggle 时需 reconfigure bg）
+
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
         self._guides: list[tuple[str, float]] = []
@@ -89,40 +152,73 @@ class VectorFlowApp(tk.Tk):
         self._build_layout()
         self._bind_shortcuts()
         self._seed_demo()
+        # 同步文档背景到当前主题（新会话以暗色启动）
+        self.document.background = self._theme()["canvas_bg"]
         self.history.push(self.document.to_dict())
         self.redraw()
 
+    def _theme(self) -> dict[str, str]:
+        return THEMES[self.theme_name]
+
+    def toggle_theme(self) -> None:
+        """在暗色/浅色主题间切换，刷新 ttk Style 和所有直接 reconfigure 的部件。"""
+        self.theme_name = "light" if self.theme_name == "dark" else "dark"
+        th = self._theme()
+        self._configure_style()
+        self.canvas.configure(bg=th["canvas_bg"])
+        if hasattr(self, "_sash") and self._sash.winfo_exists():
+            self._sash.configure(bg=th["separator"])
+        for cv in self._lib_canvases:
+            try:
+                cv.configure(bg=th["panel_bg"])
+            except tk.TclError:
+                pass
+        # 文档背景跟随主题；旧文件打开会被覆盖，符合"切到浅色立刻看到白画布"的用户预期
+        self.document.background = th["canvas_bg"]
+        # inline editor 如果开着也需要换色
+        if self._inline_editor is not None and self._inline_editor.winfo_exists():
+            self._inline_editor.configure(
+                bg=th["editor_bg"], fg=th["editor_fg"],
+                insertbackground=th["editor_caret"],
+                highlightbackground=th["editor_highlight"],
+            )
+        # pen panel 颜色硬编码在创建时，关掉让用户重新打开即可
+        self._close_pen_panel()
+        self.theme_btn_label.set(th["toggle_label"])
+        self.redraw()
+
     def _configure_style(self) -> None:
-        # Tokyo Night Storm 配色：拉开层次、加入 hover/pressed 视觉反馈
-        self.configure(bg="#16161E")
+        # 从主题字典读取所有颜色；toggle_theme 时会重新调用此方法刷新 ttk Style
+        th = self._theme()
+        self.configure(bg=th["root_bg"])
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TFrame", background="#1F2030")
-        style.configure("TLabel", background="#1F2030", foreground="#C0CAF5")
-        style.configure("TButton", background="#2A2D3F", foreground="#C0CAF5",
+        style.configure("TFrame", background=th["panel_bg"])
+        style.configure("TLabel", background=th["panel_bg"], foreground=th["fg"])
+        style.configure("TButton", background=th["button_bg"], foreground=th["fg"],
                         padding=5, borderwidth=0, focusthickness=0)
-        style.configure("Tool.TButton", background="#2A2D3F", foreground="#C0CAF5",
+        style.configure("Tool.TButton", background=th["button_bg"], foreground=th["fg"],
                         padding=(10, 6), borderwidth=0, focusthickness=0)
-        style.configure("Accent.TButton", background="#7AA2F7", foreground="#16161E",
+        style.configure("Accent.TButton", background=th["accent_bg"], foreground=th["accent_fg"],
                         padding=(10, 6), borderwidth=0, focusthickness=0)
-        style.configure("TCheckbutton", background="#1F2030", foreground="#C0CAF5")
-        style.configure("TCombobox", fieldbackground="#2A2D3F", foreground="#C0CAF5")
-        style.configure("TSpinbox", fieldbackground="#2A2D3F", foreground="#C0CAF5")
-        style.configure("TSeparator", background="#414868")
-        style.configure("Group.TLabel", background="#1F2030", foreground="#565F89",
+        style.configure("TCheckbutton", background=th["panel_bg"], foreground=th["fg"])
+        style.configure("TCombobox", fieldbackground=th["field_bg"], foreground=th["fg"])
+        style.configure("TSpinbox", fieldbackground=th["field_bg"], foreground=th["fg"])
+        style.configure("TSeparator", background=th["separator"])
+        style.configure("Group.TLabel", background=th["panel_bg"], foreground=th["caption"],
                         font=("Microsoft YaHei", 8))
         style.map("TButton",
-                  background=[("active", "#3A3F58"), ("pressed", "#414868")],
-                  foreground=[("active", "#FFFFFF")])
+                  background=[("active", th["button_hover"]), ("pressed", th["button_pressed"])],
+                  foreground=[("active", th["fg_active"])])
         style.map("Tool.TButton",
-                  background=[("active", "#3A3F58"), ("pressed", "#414868")],
-                  foreground=[("active", "#FFFFFF")])
+                  background=[("active", th["button_hover"]), ("pressed", th["button_pressed"])],
+                  foreground=[("active", th["fg_active"])])
         style.map("Accent.TButton",
-                  background=[("active", "#9AB8F8"), ("pressed", "#5C7BD9")],
-                  foreground=[("active", "#16161E")])
+                  background=[("active", th["accent_hover"]), ("pressed", th["accent_pressed"])],
+                  foreground=[("active", th["accent_fg"])])
 
     def _build_menu(self) -> None:
         menu = tk.Menu(self)
@@ -206,6 +302,8 @@ class VectorFlowApp(tk.Tk):
 
         # ── 视图 ─────────────────────────────────────────────────────
         view_row = _make_group(top, "视图")
+        ttk.Button(view_row, textvariable=self.theme_btn_label, style="Tool.TButton",
+                   command=self.toggle_theme).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Checkbutton(view_row, text="▦ 网格", variable=self.show_grid,
                         command=self.redraw).pack(side=tk.LEFT, padx=6, pady=4)
         ttk.Button(view_row, text="⬇ 导出 PNG", style="Tool.TButton",
@@ -223,8 +321,10 @@ class VectorFlowApp(tk.Tk):
         lib_container.pack_propagate(False)
 
         # 拖动调整宽度的分隔条
-        sash = tk.Frame(main, width=5, bg="#414868", cursor="sb_h_double_arrow")
+        th = self._theme()
+        sash = tk.Frame(main, width=5, bg=th["separator"], cursor="sb_h_double_arrow")
         sash.pack(side=tk.LEFT, fill=tk.Y)
+        self._sash = sash
 
         def _sash_press(event):
             sash._drag_x = event.x_root
@@ -237,8 +337,8 @@ class VectorFlowApp(tk.Tk):
 
         sash.bind("<ButtonPress-1>", _sash_press)
         sash.bind("<B1-Motion>", _sash_drag)
-        sash.bind("<Enter>", lambda e: sash.configure(bg="#5BA8FF"))
-        sash.bind("<Leave>", lambda e: sash.configure(bg="#414868"))
+        sash.bind("<Enter>", lambda e: sash.configure(bg=self._theme()["sash_hover"]))
+        sash.bind("<Leave>", lambda e: sash.configure(bg=self._theme()["separator"]))
 
         self.library = ttk.Notebook(lib_container)
         self.library.pack(fill=tk.BOTH, expand=True)
@@ -246,7 +346,8 @@ class VectorFlowApp(tk.Tk):
         def _lib_tab(title: str, items: list[tuple[str, str]], extras: list[tuple[str, "callable"]] | None = None) -> None:
             frame = ttk.Frame(self.library)
             self.library.add(frame, text=title)
-            canvas_inner = tk.Canvas(frame, bg="#1F2030", highlightthickness=0)
+            canvas_inner = tk.Canvas(frame, bg=self._theme()["panel_bg"], highlightthickness=0)
+            self._lib_canvases.append(canvas_inner)
             scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_inner.yview)
             canvas_inner.configure(yscrollcommand=scrollbar.set)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -297,7 +398,7 @@ class VectorFlowApp(tk.Tk):
 
         canvas_frame = ttk.Frame(main)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas = tk.Canvas(canvas_frame, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg="#16161E", highlightthickness=0)
+        self.canvas = tk.Canvas(canvas_frame, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg=self._theme()["canvas_bg"], highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind("<ButtonPress-1>", self.on_left_down)
@@ -405,9 +506,10 @@ class VectorFlowApp(tk.Tk):
 
     def _open_pen_panel(self, anchor_btn: tk.Widget) -> None:
         self._close_pen_panel()
+        th = self._theme()
         panel = tk.Toplevel(self)
         panel.overrideredirect(True)
-        panel.configure(bg="#1F2030", bd=1, relief=tk.SOLID)
+        panel.configure(bg=th["panel_bg"], bd=1, relief=tk.SOLID)
         anchor_btn.update_idletasks()
         x = anchor_btn.winfo_rootx()
         y = anchor_btn.winfo_rooty() + anchor_btn.winfo_height() + 2
@@ -417,7 +519,7 @@ class VectorFlowApp(tk.Tk):
         ttk.Label(panel, text="颜色").grid(row=0, column=0, sticky=tk.W, padx=10, pady=(10, 4))
         self._pen_color_btn = tk.Button(
             panel, textvariable=self.pen_color, bg=self.pen_color.get(),
-            fg="#16161E", activebackground=self.pen_color.get(), bd=0,
+            fg=th["accent_fg"], activebackground=self.pen_color.get(), bd=0,
             font=("Consolas", 9), command=self._choose_pen_color, width=12,
         )
         self._pen_color_btn.grid(row=0, column=1, columnspan=5, sticky=tk.W, padx=4, pady=(10, 4))
@@ -440,12 +542,12 @@ class VectorFlowApp(tk.Tk):
                   orient=tk.HORIZONTAL, length=200).grid(row=3, column=1, columnspan=5,
                                                          sticky=tk.W, padx=4)
         ttk.Label(panel, text="(硬笔 ←→ 丝滑)",
-                  background="#1F2030", foreground="#565F89",
+                  background=th["panel_bg"], foreground=th["caption"],
                   font=("Microsoft YaHei", 8)).grid(row=4, column=1, columnspan=5, sticky=tk.W, padx=4)
 
         # 行 5: 说明
         ttk.Label(panel, text="画笔属性仅作用于画笔工具",
-                  background="#1F2030", foreground="#565F89",
+                  background=th["panel_bg"], foreground=th["caption"],
                   font=("Microsoft YaHei", 8)).grid(row=5, column=0, columnspan=6, pady=(8, 4))
 
         panel.bind("<Escape>", lambda _e: self._close_pen_panel())
@@ -475,7 +577,14 @@ class VectorFlowApp(tk.Tk):
         height = max(1, self.canvas.winfo_height())
         if self.renderer is None or self.renderer.width != width or self.renderer.height != height:
             self.renderer = Renderer(width, height)
-        image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft, guides=self._guides or None)
+        th = self._theme()
+        chrome = {
+            "grid": th["grid"],
+            "selection": th["selection"],
+            "selection_handle_fill": th["selection_handle_fill"],
+            "guide": th["guide"],
+        }
+        image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft, guides=self._guides or None, chrome=chrome)
         self.photo = ImageTk.PhotoImage(image)
         self.canvas.delete("render")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="render")
@@ -826,11 +935,12 @@ class VectorFlowApp(tk.Tk):
     def _create_text_widget(self, sx: int, sy: int, text: str, wx: float, wy: float) -> None:
         if self._inline_editor:
             self._commit_inline_editor()
+        th = self._theme()
         editor = tk.Text(
             self.canvas, width=22, height=3, wrap=tk.WORD,
-            bg="#2A2D3F", fg="#C0CAF5", insertbackground="#FFFFFF",
+            bg=th["editor_bg"], fg=th["editor_fg"], insertbackground=th["editor_caret"],
             font=("Microsoft YaHei", 11), relief=tk.SOLID, bd=1,
-            highlightbackground="#5BA8FF", highlightthickness=2,
+            highlightbackground=th["editor_highlight"], highlightthickness=2,
         )
         editor.insert("1.0", text)
         editor._world_pos = (wx, wy)
