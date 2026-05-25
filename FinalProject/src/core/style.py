@@ -16,6 +16,7 @@ class ShapeStyle:
     text_color: Color = "#D0D0E0"
     text_align: str = "center"
     bold: bool = False
+    smoothness: int = 3
 
     def to_dict(self) -> dict:
         return {
@@ -27,6 +28,7 @@ class ShapeStyle:
             "text_color": _serialize_color(self.text_color),
             "text_align": self.text_align,
             "bold": self.bold,
+            "smoothness": self.smoothness,
         }
 
     @classmethod
@@ -42,6 +44,7 @@ class ShapeStyle:
             text_color=_deserialize_color(payload.get("text_color", "#D0D0E0")),
             text_align=str(payload.get("text_align", "center")),
             bold=bool(payload.get("bold", False)),
+            smoothness=int(payload.get("smoothness", 3)),
         )
 
 

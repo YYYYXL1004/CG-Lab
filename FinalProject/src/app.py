@@ -65,9 +65,16 @@ class VectorFlowApp(tk.Tk):
         self.conn_dash_var = tk.StringVar(value="━━ 实线")
         self.text_align_var = tk.StringVar(value="居中")
         self.text_bold_var = tk.BooleanVar(value=False)
-        self.text_color_var = tk.StringVar(value="#D0D0E0")
+        self.text_color_var = tk.StringVar(value="#C0CAF5")
         self.rotate_deg = tk.DoubleVar(value=15)
         self.scale_pct = tk.DoubleVar(value=120)
+
+        # 画笔（曲线工具）独立属性：与图形描边色/线宽完全解耦
+        self.pen_color = tk.StringVar(value="#7AA2F7")
+        self.pen_width = tk.IntVar(value=2)
+        self.pen_dash = tk.StringVar(value="━━ 实线")
+        self.pen_smoothness = tk.IntVar(value=3)
+        self._pen_panel: tk.Toplevel | None = None
 
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
@@ -86,20 +93,36 @@ class VectorFlowApp(tk.Tk):
         self.redraw()
 
     def _configure_style(self) -> None:
-        self.configure(bg="#1E1E2E")
+        # Tokyo Night Storm 配色：拉开层次、加入 hover/pressed 视觉反馈
+        self.configure(bg="#16161E")
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TFrame", background="#252535")
-        style.configure("TLabel", background="#252535", foreground="#D0D0E0")
-        style.configure("TButton", background="#2D2D40", foreground="#E7ECF5", padding=5)
-        style.configure("Tool.TButton", background="#2D2D40", foreground="#E7ECF5", padding=(8, 5))
-        style.configure("Accent.TButton", background="#4690E0", foreground="#FFFFFF", padding=(8, 5))
-        style.configure("TCheckbutton", background="#252535", foreground="#D0D0E0")
-        style.configure("TCombobox", fieldbackground="#2D2D40", foreground="#D0D0E0")
-        style.configure("TSpinbox", fieldbackground="#2D2D40", foreground="#D0D0E0")
+        style.configure("TFrame", background="#1F2030")
+        style.configure("TLabel", background="#1F2030", foreground="#C0CAF5")
+        style.configure("TButton", background="#2A2D3F", foreground="#C0CAF5",
+                        padding=5, borderwidth=0, focusthickness=0)
+        style.configure("Tool.TButton", background="#2A2D3F", foreground="#C0CAF5",
+                        padding=(10, 6), borderwidth=0, focusthickness=0)
+        style.configure("Accent.TButton", background="#7AA2F7", foreground="#16161E",
+                        padding=(10, 6), borderwidth=0, focusthickness=0)
+        style.configure("TCheckbutton", background="#1F2030", foreground="#C0CAF5")
+        style.configure("TCombobox", fieldbackground="#2A2D3F", foreground="#C0CAF5")
+        style.configure("TSpinbox", fieldbackground="#2A2D3F", foreground="#C0CAF5")
+        style.configure("TSeparator", background="#414868")
+        style.configure("Group.TLabel", background="#1F2030", foreground="#565F89",
+                        font=("Microsoft YaHei", 8))
+        style.map("TButton",
+                  background=[("active", "#3A3F58"), ("pressed", "#414868")],
+                  foreground=[("active", "#FFFFFF")])
+        style.map("Tool.TButton",
+                  background=[("active", "#3A3F58"), ("pressed", "#414868")],
+                  foreground=[("active", "#FFFFFF")])
+        style.map("Accent.TButton",
+                  background=[("active", "#9AB8F8"), ("pressed", "#5C7BD9")],
+                  foreground=[("active", "#16161E")])
 
     def _build_menu(self) -> None:
         menu = tk.Menu(self)
@@ -134,20 +157,61 @@ class VectorFlowApp(tk.Tk):
 
     def _build_layout(self) -> None:
         top = ttk.Frame(self)
-        top.pack(side=tk.TOP, fill=tk.X)
-        for label, tool in [("选择(V)", "select"), ("直线(L)", "line"), ("曲线(C)", "curve"), ("文本(T)", "text"), ("连接线(K)", "connector"), ("区域导出", "region_export")]:
-            ttk.Button(top, text=label, style="Tool.TButton", command=lambda t=tool: self.set_tool(t)).pack(side=tk.LEFT, padx=2, pady=4)
-        self.undo_btn = ttk.Button(top, text="撤销", command=self.undo)
-        self.undo_btn.pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="清屏", command=self.clear_canvas).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=4)
-        ttk.Button(top, text="图形样式…", command=self.open_style_dialog).pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="连接线…", command=self.open_connector_dialog).pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="文本样式…", command=self.open_text_dialog).pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="变换…", command=self.open_transform_dialog).pack(side=tk.LEFT, padx=2)
-        ttk.Checkbutton(top, text="网格", variable=self.show_grid, command=self.redraw).pack(side=tk.LEFT, padx=10)
-        ttk.Button(top, text="保存", style="Accent.TButton", command=self.save_document).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(top, text="导出 PNG", command=self.export_png).pack(side=tk.RIGHT, padx=4)
+        top.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(4, 2))
+
+        def _make_group(parent: tk.Widget, title: str) -> ttk.Frame:
+            """Create a labeled button group with a small caption above the row."""
+            wrapper = ttk.Frame(parent)
+            ttk.Label(wrapper, text=title, style="Group.TLabel").pack(side=tk.TOP, anchor=tk.W, padx=6)
+            row = ttk.Frame(wrapper)
+            row.pack(side=tk.TOP, fill=tk.X)
+            wrapper.pack(side=tk.LEFT, padx=2)
+            return row
+
+        # ── 绘制 ─────────────────────────────────────────────────────
+        draw_row = _make_group(top, "绘制")
+        for label, tool in [("▣ 选择(V)", "select"), ("╱ 直线(L)", "line")]:
+            ttk.Button(draw_row, text=label, style="Tool.TButton",
+                       command=lambda t=tool: self.set_tool(t)).pack(side=tk.LEFT, padx=2, pady=4)
+        self.curve_btn = ttk.Button(draw_row, text="∿ 画笔(C) ▾", style="Tool.TButton")
+        self.curve_btn.configure(command=self._on_curve_button)
+        self.curve_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        for label, tool in [("T 文本(T)", "text"), ("→ 连接(K)", "connector"), ("▦ 区域导出", "region_export")]:
+            ttk.Button(draw_row, text=label, style="Tool.TButton",
+                       command=lambda t=tool: self.set_tool(t)).pack(side=tk.LEFT, padx=2, pady=4)
+
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
+
+        # ── 编辑 ─────────────────────────────────────────────────────
+        edit_row = _make_group(top, "编辑")
+        self.undo_btn = ttk.Button(edit_row, text="↶ 撤销", style="Tool.TButton", command=self.undo)
+        self.undo_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(edit_row, text="✕ 清屏", style="Tool.TButton",
+                   command=self.clear_canvas).pack(side=tk.LEFT, padx=2, pady=4)
+
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
+
+        # ── 样式 ─────────────────────────────────────────────────────
+        style_row = _make_group(top, "样式")
+        ttk.Button(style_row, text="◆ 图形", style="Tool.TButton",
+                   command=self.open_style_dialog).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(style_row, text="─ 连接线", style="Tool.TButton",
+                   command=self.open_connector_dialog).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(style_row, text="T 文本", style="Tool.TButton",
+                   command=self.open_text_dialog).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(style_row, text="↻ 变换", style="Tool.TButton",
+                   command=self.open_transform_dialog).pack(side=tk.LEFT, padx=2, pady=4)
+
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
+
+        # ── 视图 ─────────────────────────────────────────────────────
+        view_row = _make_group(top, "视图")
+        ttk.Checkbutton(view_row, text="▦ 网格", variable=self.show_grid,
+                        command=self.redraw).pack(side=tk.LEFT, padx=6, pady=4)
+        ttk.Button(view_row, text="⬇ 导出 PNG", style="Tool.TButton",
+                   command=self.export_png).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(view_row, text="⬆ 保存", style="Accent.TButton",
+                   command=self.save_document).pack(side=tk.LEFT, padx=2, pady=4)
 
         main = ttk.Frame(self)
         main.pack(fill=tk.BOTH, expand=True)
@@ -159,7 +223,7 @@ class VectorFlowApp(tk.Tk):
         lib_container.pack_propagate(False)
 
         # 拖动调整宽度的分隔条
-        sash = tk.Frame(main, width=5, bg="#3A3A50", cursor="sb_h_double_arrow")
+        sash = tk.Frame(main, width=5, bg="#414868", cursor="sb_h_double_arrow")
         sash.pack(side=tk.LEFT, fill=tk.Y)
 
         def _sash_press(event):
@@ -174,7 +238,7 @@ class VectorFlowApp(tk.Tk):
         sash.bind("<ButtonPress-1>", _sash_press)
         sash.bind("<B1-Motion>", _sash_drag)
         sash.bind("<Enter>", lambda e: sash.configure(bg="#5BA8FF"))
-        sash.bind("<Leave>", lambda e: sash.configure(bg="#3A3A50"))
+        sash.bind("<Leave>", lambda e: sash.configure(bg="#414868"))
 
         self.library = ttk.Notebook(lib_container)
         self.library.pack(fill=tk.BOTH, expand=True)
@@ -182,7 +246,7 @@ class VectorFlowApp(tk.Tk):
         def _lib_tab(title: str, items: list[tuple[str, str]], extras: list[tuple[str, "callable"]] | None = None) -> None:
             frame = ttk.Frame(self.library)
             self.library.add(frame, text=title)
-            canvas_inner = tk.Canvas(frame, bg="#252535", highlightthickness=0)
+            canvas_inner = tk.Canvas(frame, bg="#1F2030", highlightthickness=0)
             scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_inner.yview)
             canvas_inner.configure(yscrollcommand=scrollbar.set)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -233,7 +297,7 @@ class VectorFlowApp(tk.Tk):
 
         canvas_frame = ttk.Frame(main)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas = tk.Canvas(canvas_frame, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg="#1E1E2E", highlightthickness=0)
+        self.canvas = tk.Canvas(canvas_frame, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg="#16161E", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind("<ButtonPress-1>", self.on_left_down)
@@ -320,11 +384,89 @@ class VectorFlowApp(tk.Tk):
         if self._freehand_points:
             self._freehand_points = []
             self.canvas.delete("preview")
+        # 切到非曲线工具时自动收起画笔属性面板
+        if tool != "curve":
+            self._close_pen_panel()
         self.status_text.set(f"当前工具: {tool}")
 
     def pick_flow_shape(self, kind: str) -> None:
         self.pending_flow_kind = kind
         self.set_tool("flow")
+
+    # ── Pen panel (curve tool's floating property popup) ────────────
+
+    def _on_curve_button(self) -> None:
+        """点曲线按钮：选中曲线工具，同时切换属性面板的开/关状态。"""
+        if self._pen_panel is not None and self._pen_panel.winfo_exists():
+            self._close_pen_panel()
+            return
+        self.set_tool("curve")
+        self._open_pen_panel(self.curve_btn)
+
+    def _open_pen_panel(self, anchor_btn: tk.Widget) -> None:
+        self._close_pen_panel()
+        panel = tk.Toplevel(self)
+        panel.overrideredirect(True)
+        panel.configure(bg="#1F2030", bd=1, relief=tk.SOLID)
+        anchor_btn.update_idletasks()
+        x = anchor_btn.winfo_rootx()
+        y = anchor_btn.winfo_rooty() + anchor_btn.winfo_height() + 2
+        panel.geometry(f"320x210+{x}+{y}")
+
+        # 行 0: 颜色
+        ttk.Label(panel, text="颜色").grid(row=0, column=0, sticky=tk.W, padx=10, pady=(10, 4))
+        self._pen_color_btn = tk.Button(
+            panel, textvariable=self.pen_color, bg=self.pen_color.get(),
+            fg="#16161E", activebackground=self.pen_color.get(), bd=0,
+            font=("Consolas", 9), command=self._choose_pen_color, width=12,
+        )
+        self._pen_color_btn.grid(row=0, column=1, columnspan=5, sticky=tk.W, padx=4, pady=(10, 4))
+
+        # 行 1: 粗细预设
+        ttk.Label(panel, text="粗细").grid(row=1, column=0, sticky=tk.W, padx=10, pady=4)
+        for i, w in enumerate([1, 2, 3, 5, 8]):
+            ttk.Button(panel, text=str(w), width=3, style="Tool.TButton",
+                       command=lambda v=w: self.pen_width.set(v)).grid(row=1, column=1 + i, padx=2)
+
+        # 行 2: 笔型
+        ttk.Label(panel, text="笔型").grid(row=2, column=0, sticky=tk.W, padx=10, pady=4)
+        ttk.Combobox(panel, textvariable=self.pen_dash,
+                     values=list(DASH_PRESETS.keys()),
+                     state="readonly", width=14).grid(row=2, column=1, columnspan=5, sticky=tk.W, padx=4)
+
+        # 行 3: 平滑度
+        ttk.Label(panel, text="平滑").grid(row=3, column=0, sticky=tk.W, padx=10, pady=4)
+        ttk.Scale(panel, from_=1, to=5, variable=self.pen_smoothness,
+                  orient=tk.HORIZONTAL, length=200).grid(row=3, column=1, columnspan=5,
+                                                         sticky=tk.W, padx=4)
+        ttk.Label(panel, text="(硬笔 ←→ 丝滑)",
+                  background="#1F2030", foreground="#565F89",
+                  font=("Microsoft YaHei", 8)).grid(row=4, column=1, columnspan=5, sticky=tk.W, padx=4)
+
+        # 行 5: 说明
+        ttk.Label(panel, text="画笔属性仅作用于画笔工具",
+                  background="#1F2030", foreground="#565F89",
+                  font=("Microsoft YaHei", 8)).grid(row=5, column=0, columnspan=6, pady=(8, 4))
+
+        panel.bind("<Escape>", lambda _e: self._close_pen_panel())
+        # 注意：避免 <FocusOut> 关闭面板 —— colorchooser/Combobox 弹出会失焦
+        panel.focus_force()
+        self._pen_panel = panel
+
+    def _close_pen_panel(self) -> None:
+        if self._pen_panel is not None:
+            try:
+                self._pen_panel.destroy()
+            except tk.TclError:
+                pass
+            self._pen_panel = None
+
+    def _choose_pen_color(self) -> None:
+        c = colorchooser.askcolor(color=self.pen_color.get(), parent=self._pen_panel or self)[1]
+        if c:
+            self.pen_color.set(c)
+            if hasattr(self, "_pen_color_btn") and self._pen_color_btn.winfo_exists():
+                self._pen_color_btn.configure(bg=c, activebackground=c)
 
     # ── Rendering ───────────────────────────────────────────────────
 
@@ -501,13 +643,18 @@ class VectorFlowApp(tk.Tk):
             self._freehand_points = []
             self.canvas.delete("preview")
             if len(pts) >= 2:
-                self.document.add_shape(CurveShape(
-                    points=pts,
-                    style=ShapeStyle(stroke=self.stroke_color.get(), fill=None, stroke_width=self.stroke_width.get()),
-                ))
+                dash = DASH_PRESETS.get(self.pen_dash.get(), [])
+                style = ShapeStyle(
+                    stroke=self.pen_color.get(),
+                    fill=None,
+                    stroke_width=self.pen_width.get(),
+                    dash=dash,
+                    smoothness=self.pen_smoothness.get(),
+                )
+                self.document.add_shape(CurveShape(points=pts, style=style))
                 self._push_history()
                 self.redraw()
-                self.status_text.set(f"曲线已创建（{len(pts)} 个采样点）")
+                self.status_text.set(f"画笔轨迹已创建（{len(pts)} 个采样点）")
         elif tool == "region_export":
             self.canvas.delete("preview")
             self._do_region_export(self.drag_start, current)
@@ -681,7 +828,7 @@ class VectorFlowApp(tk.Tk):
             self._commit_inline_editor()
         editor = tk.Text(
             self.canvas, width=22, height=3, wrap=tk.WORD,
-            bg="#2D2D40", fg="#E7ECF5", insertbackground="#FFFFFF",
+            bg="#2A2D3F", fg="#C0CAF5", insertbackground="#FFFFFF",
             font=("Microsoft YaHei", 11), relief=tk.SOLID, bd=1,
             highlightbackground="#5BA8FF", highlightthickness=2,
         )
@@ -895,7 +1042,7 @@ class VectorFlowApp(tk.Tk):
         if self._freehand_points:
             self._freehand_points = []
             self.canvas.delete("preview")
-            self.status_text.set("已取消曲线绘制")
+            self.status_text.set("已取消画笔绘制")
         self.redraw()
 
     # ── Undo / Redo ─────────────────────────────────────────────────

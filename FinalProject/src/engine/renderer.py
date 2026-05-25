@@ -21,6 +21,8 @@ CIRCUIT_KINDS = {
     "switch", "led", "inductor", "voltage_source",
 }
 
+SMOOTHNESS_STEPS = {1: 4, 2: 10, 3: 20, 4: 40, 5: 80}
+
 
 class Renderer:
     def __init__(self, width: int, height: int):
@@ -101,7 +103,8 @@ class Renderer:
         elif isinstance(shape, CurveShape):
             if len(shape.points) < 2:
                 return
-            sample = catmull_rom_polyline(shape.points)
+            steps = SMOOTHNESS_STEPS.get(getattr(shape.style, "smoothness", 3), 20)
+            sample = catmull_rom_polyline(shape.points, steps_per_segment=steps)
             screen_pts = [self._world_to_screen(p, zoom, pan) for p in sample]
             _draw_polyline(pixels, screen_pts, shape.style.stroke,
                            max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
@@ -213,8 +216,33 @@ def _draw_polyline(
     width: int = 1,
     dash: list[int] | None = None,
 ) -> None:
+    if not dash:
+        for a, b in zip(points, points[1:]):
+            _draw_line(pixels, a, b, color, width, None)
+        return
+    # dash 在多段间相位连续：避免每小段重置 pattern 导致采样过密的曲线
+    # 看起来都是实线（pattern 永远停在第一个 "on" 区间）。
+    # 同时按笔头宽度缩放 pattern，否则粗笔头会把 gap 涂满。
+    scale = max(1, width)
+    clean_pattern = [max(1, int(length) * scale) for length in dash]
+    period = sum(clean_pattern)
+    phase = 0
     for a, b in zip(points, points[1:]):
-        _draw_line(pixels, a, b, color, width, dash)
+        seg = bresenham_line(round(a[0]), round(a[1]), round(b[0]), round(b[1]))
+        kept = []
+        for i, point in enumerate(seg):
+            cursor = (i + phase) % period
+            total = 0
+            draw = True
+            for length in clean_pattern:
+                total += length
+                if cursor < total:
+                    break
+                draw = not draw
+            if draw:
+                kept.append(point)
+        _draw_points(pixels, kept, color, width)
+        phase = (phase + len(seg)) % period if period else 0
 
 
 def _draw_points(pixels, points: list[tuple[int | float, int | float]], color, width: int = 1) -> None:
