@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
@@ -178,7 +179,7 @@ class VectorFlowApp(tk.Tk):
         self.library = ttk.Notebook(lib_container)
         self.library.pack(fill=tk.BOTH, expand=True)
 
-        def _lib_tab(title: str, items: list[tuple[str, str]]) -> None:
+        def _lib_tab(title: str, items: list[tuple[str, str]], extras: list[tuple[str, "callable"]] | None = None) -> None:
             frame = ttk.Frame(self.library)
             self.library.add(frame, text=title)
             canvas_inner = tk.Canvas(frame, bg="#252535", highlightthickness=0)
@@ -188,6 +189,10 @@ class VectorFlowApp(tk.Tk):
             canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             inner = ttk.Frame(canvas_inner)
             win_id = canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
+            if extras:
+                for text, callback in extras:
+                    ttk.Button(inner, text=text, style="Accent.TButton", command=callback).pack(fill=tk.X, padx=4, pady=(4, 6))
+                ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=4, pady=2)
             for text, kind in items:
                 btn = ttk.Button(inner, text=text, command=lambda k=kind: self.pick_flow_shape(k))
                 btn.pack(fill=tk.X, padx=4, pady=2)
@@ -224,7 +229,7 @@ class VectorFlowApp(tk.Tk):
             ("电阻", "resistor"), ("电容", "capacitor"), ("接地", "ground"),
             ("电池", "battery"), ("开关", "switch"), ("LED", "led"),
             ("电感", "inductor"), ("电压源", "voltage_source"),
-        ])
+        ], extras=[("📋 加载默认电路", self.load_circuit_template)])
 
         canvas_frame = ttk.Frame(main)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -268,6 +273,43 @@ class VectorFlowApp(tk.Tk):
         decision = self.document.add_shape(FlowchartShape("decision", 590, 65, 140, 100, "是否通过?"))
         self.document.add_connector(ConnectorShape(start.id, step.id, "right", "left"))
         self.document.add_connector(ConnectorShape(step.id, decision.id, "right", "left"))
+
+    def load_circuit_template(self) -> None:
+        """Replace the canvas with a battery → switch → resistor → LED loop."""
+        if self.document.shapes or self.document.connectors:
+            if not messagebox.askyesno("加载默认电路", "当前画布将被替换为默认电路模板，是否继续？"):
+                return
+        self.document.shapes.clear()
+        self.document.connectors.clear()
+        self.selected_ids.clear()
+
+        style = ShapeStyle(stroke=self.stroke_color.get(), fill=self.fill_color.get(),
+                           stroke_width=self.stroke_width.get())
+        wire = ShapeStyle(stroke=self.stroke_color.get(), fill=None,
+                          stroke_width=self.stroke_width.get())
+
+        # Uniform height (50) + uniform 40px gaps → top-row wires stay flat and
+        # the bottom-bottom elbow degenerates into a clean U (no backtracks).
+        battery = FlowchartShape("battery", 150, 200, 70, 50, "", style)
+        switch = FlowchartShape("switch", 260, 200, 90, 50, "", style)
+        resistor = FlowchartShape("resistor", 390, 200, 100, 50, "R", style)
+        led = FlowchartShape("led", 530, 200, 110, 50, "", style)
+        for shape in (battery, switch, resistor, led):
+            self.document.add_shape(shape)
+
+        # Wires carry no arrowheads — circuit diagrams use plain lines.
+        def _wire(a, b, sa, ea, kind="straight"):
+            return ConnectorShape(a.id, b.id, sa, ea, kind=kind,
+                                  arrow_end="none", arrow_start="none", style=wire)
+
+        self.document.add_connector(_wire(battery, switch, "right", "left"))
+        self.document.add_connector(_wire(switch, resistor, "right", "left"))
+        self.document.add_connector(_wire(resistor, led, "right", "left"))
+        self.document.add_connector(_wire(led, battery, "bottom", "bottom", kind="elbow"))
+
+        self._push_history()
+        self.redraw()
+        self._update_status("已加载默认电路模板（电池 → 开关 → 电阻 → LED）")
 
     # ── Tool management ─────────────────────────────────────────────
 
@@ -377,7 +419,8 @@ class VectorFlowApp(tk.Tk):
             self.status_text.set("拖拽选择导出区域")
 
         elif tool == "line":
-            pass
+            # Snap the start point to a nearby anchor if there is one.
+            self.drag_start = self._snap_to_anchor(*self.drag_start)
 
         elif tool == "curve":
             self._freehand_points = [self.drag_start]
@@ -425,10 +468,16 @@ class VectorFlowApp(tk.Tk):
                 return
             self.canvas.delete("preview")
             x0, y0 = self.world_to_screen(self.drag_start)
-            x1, y1 = self.world_to_screen(current)
             if tool == "line":
-                self.canvas.create_line(x0, y0, x1, y1, fill="#FFCF5A", dash=(4, 3), tags="preview")
+                snapped = self._snap_to_anchor(*current)
+                sx, sy = self.world_to_screen(snapped)
+                self.canvas.create_line(x0, y0, sx, sy, fill="#FFCF5A", dash=(4, 3), tags="preview")
+                if snapped != current:
+                    # Indicate the snapped endpoint with a small dot.
+                    self.canvas.create_oval(sx - 4, sy - 4, sx + 4, sy + 4,
+                                            outline="#5BFFCF", width=2, tags="preview")
             else:
+                x1, y1 = self.world_to_screen(current)
                 self.canvas.create_rectangle(x0, y0, x1, y1, outline="#5AFF8A", dash=(4, 3), width=2, tags="preview")
 
     def on_left_up(self, event) -> None:
@@ -439,7 +488,9 @@ class VectorFlowApp(tk.Tk):
         self._guides = []  # clear alignment guides on mouse release
 
         if tool == "line":
-            self.document.add_shape(LineShape(self.drag_start[0], self.drag_start[1], current[0], current[1]))
+            ex, ey = self._snap_to_anchor(*current)
+            style = ShapeStyle(stroke=self.stroke_color.get(), fill=None, stroke_width=self.stroke_width.get())
+            self.document.add_shape(LineShape(self.drag_start[0], self.drag_start[1], ex, ey, style=style))
             self._push_history()
             self.canvas.delete("preview")
             self.redraw()
@@ -548,10 +599,10 @@ class VectorFlowApp(tk.Tk):
             "parallelogram": (150, 80), "plus": (100, 100),
             # Org chart
             "org_box": (160, 70),
-            # Circuit symbols
-            "resistor": (120, 60), "capacitor": (80, 70), "ground": (80, 80),
-            "battery": (120, 60), "switch": (120, 60), "led": (120, 70),
-            "inductor": (120, 60), "voltage_source": (80, 80),
+            # Circuit symbols (bbox includes short leads on each side)
+            "resistor": (100, 40), "capacitor": (60, 60), "ground": (70, 60),
+            "battery": (70, 50), "switch": (90, 40), "led": (110, 60),
+            "inductor": (120, 50), "voltage_source": (80, 80),
         }
         labels = {
             "process": "处理", "decision": "判断", "terminal": "开始/结束",
@@ -584,6 +635,20 @@ class VectorFlowApp(tk.Tk):
         self.canvas.delete("preview")
         if len(flat) >= 4:
             self.canvas.create_line(*flat, fill="#5BFFCF", width=2, tags="preview")
+
+    def _snap_to_anchor(self, x: float, y: float, threshold: float = 16.0) -> tuple[float, float]:
+        """Return the closest FlowchartShape anchor within threshold (world units), or (x, y) unchanged."""
+        best: tuple[float, float] | None = None
+        best_dist = threshold
+        for shape in self.document.shapes:
+            if not isinstance(shape, FlowchartShape):
+                continue
+            for ax, ay in shape.anchors().values():
+                d = math.hypot(ax - x, ay - y)
+                if d < best_dist:
+                    best_dist = d
+                    best = (ax, ay)
+        return best if best is not None else (x, y)
 
     def best_anchor_pair(self, start: FlowchartShape, end: FlowchartShape) -> tuple[str, str]:
         sx, sy = start.center().x, start.center().y

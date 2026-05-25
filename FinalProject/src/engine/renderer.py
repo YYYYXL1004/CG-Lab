@@ -80,10 +80,15 @@ class Renderer:
             elif shape.kind == "voltage_source":
                 x1, y1, x2, y2 = shape.bounds()
                 cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                r = min(x2 - x1, y2 - y1) * 0.38
+                r = min(x2 - x1, y2 - y1) * 0.35
                 _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), r * zoom, r * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
             if shape.text:
-                self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
+                text_bounds = shape.bounds()
+                if shape.kind == "inductor":
+                    # Coils occupy the upper half, so push the label below.
+                    x1, y1, x2, y2 = text_bounds
+                    text_bounds = (x1, (y1 + y2) / 2, x2, y2)
+                self._draw_text(image, shape.text, text_bounds, shape.style, zoom, pan)
         elif isinstance(shape, LineShape):
             _draw_line(
                 pixels,

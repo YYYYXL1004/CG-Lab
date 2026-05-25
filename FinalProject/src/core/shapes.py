@@ -173,24 +173,27 @@ class FlowchartShape:
         elif self.kind == "database":
             segs.extend([((x, y + h * 0.22), (x, y + h * 0.82)), ((x + w, y + h * 0.22), (x + w, y + h * 0.82))])
         elif self.kind == "resistor":
-            # Two lead wires + rectangle body
-            bx1, bx2 = x + w * 0.2, x + w * 0.8
+            # Rectangular body in the middle 70%, short leads to bbox edges so
+            # left/right anchors land at the lead tips.
+            bx1, bx2 = x + w * 0.15, x + w * 0.85
             by1, by2 = y + h * 0.25, y + h * 0.75
             segs += [
-                ((x, cy), (bx1, cy)),       # left lead
-                ((bx2, cy), (x + w, cy)),   # right lead
-                ((bx1, by1), (bx2, by1)),   # top of body
-                ((bx2, by1), (bx2, by2)),   # right of body
-                ((bx2, by2), (bx1, by2)),   # bottom of body
-                ((bx1, by2), (bx1, by1)),   # left of body
+                ((x, cy), (bx1, cy)),
+                ((bx2, cy), (x + w, cy)),
+                ((bx1, by1), (bx2, by1)),
+                ((bx2, by1), (bx2, by2)),
+                ((bx2, by2), (bx1, by2)),
+                ((bx1, by2), (bx1, by1)),
             ]
         elif self.kind == "capacitor":
-            gap = h * 0.12
+            # Two tight plates near the middle with leads extending to bbox.
+            plate1_x = x + w * 0.4
+            plate2_x = x + w * 0.6
             segs += [
-                ((x, cy), (cx - gap, cy)),          # left lead
-                ((cx + gap, cy), (x + w, cy)),      # right lead
-                ((cx - gap, y + h * 0.1), (cx - gap, y + h * 0.9)),  # left plate
-                ((cx + gap, y + h * 0.1), (cx + gap, y + h * 0.9)),  # right plate
+                ((x, cy), (plate1_x, cy)),
+                ((plate2_x, cy), (x + w, cy)),
+                ((plate1_x, y + h * 0.15), (plate1_x, y + h * 0.85)),
+                ((plate2_x, y + h * 0.15), (plate2_x, y + h * 0.85)),
             ]
         elif self.kind == "ground":
             segs += [
@@ -200,59 +203,64 @@ class FlowchartShape:
                 ((cx - w * 0.14, cy + h * 0.4), (cx + w * 0.14, cy + h * 0.4)),  # bottom bar
             ]
         elif self.kind == "battery":
-            # alternating long/short vertical bars + leads
-            bar_xs = [cx - w * 0.2, cx - w * 0.07, cx + w * 0.07, cx + w * 0.2]
-            heights = [h * 0.6, h * 0.35, h * 0.6, h * 0.35]
-            segs += [((x, cy), (bar_xs[0], cy)), ((bar_xs[-1], cy), (x + w, cy))]
-            for bx, bh in zip(bar_xs, heights):
-                segs.append(((bx, cy - bh / 2), (bx, cy + bh / 2)))
-        elif self.kind == "switch":
-            # two terminals + open switch arm
+            # Single cell: long anode plate + short cathode plate in the
+            # middle, leads to bbox edges.
+            plate1_x = x + w * 0.4
+            plate2_x = x + w * 0.6
             segs += [
-                ((x, cy), (x + w * 0.3, cy)),              # left terminal wire
-                ((x + w * 0.7, cy), (x + w, cy)),          # right terminal wire
-                ((x + w * 0.3, cy), (x + w * 0.7, cy - h * 0.35)),  # switch arm (open)
-                # terminal dots (short cross marks)
-                ((x + w * 0.3, cy - h * 0.08), (x + w * 0.3, cy + h * 0.08)),
-                ((x + w * 0.7, cy - h * 0.08), (x + w * 0.7, cy + h * 0.08)),
+                ((x, cy), (plate1_x, cy)),
+                ((plate2_x, cy), (x + w, cy)),
+                ((plate1_x, cy - h * 0.4), (plate1_x, cy + h * 0.4)),
+                ((plate2_x, cy - h * 0.2), (plate2_x, cy + h * 0.2)),
+            ]
+        elif self.kind == "switch":
+            # Two terminals inset from bbox edges with leads; arm pivots open
+            # at the left terminal.
+            t1_x = x + w * 0.2
+            t2_x = x + w * 0.8
+            segs += [
+                ((x, cy), (t1_x, cy)),
+                ((t2_x, cy), (x + w, cy)),
+                ((t1_x, cy - h * 0.1), (t1_x, cy + h * 0.1)),  # left terminal dot
+                ((t2_x, cy - h * 0.1), (t2_x, cy + h * 0.1)),  # right terminal dot
+                ((t1_x, cy), (t2_x, cy - h * 0.5)),            # open arm
             ]
         elif self.kind == "led":
-            # triangle (diode) + vertical bar + two emission arrows
-            tip_x = cx + w * 0.15
-            base_x = cx - w * 0.15
+            # Diode body in the middle 60%; emission arrows tucked above the
+            # cathode but inside the bbox.
+            base_x = x + w * 0.3
+            tip_x = x + w * 0.7
             segs += [
-                ((x, cy), (base_x, cy)),                    # left lead
-                ((tip_x, cy), (x + w, cy)),                 # right lead
-                ((base_x, y + h * 0.2), (base_x, y + h * 0.8)),  # base vertical
-                ((base_x, y + h * 0.2), (tip_x, cy)),      # triangle top edge
-                ((base_x, y + h * 0.8), (tip_x, cy)),      # triangle bottom edge
-                ((tip_x, y + h * 0.2), (tip_x, y + h * 0.8)),    # cathode bar
-                # emission arrows (diagonal lines suggesting light)
-                ((tip_x + w * 0.06, y + h * 0.15), (tip_x + w * 0.18, y + h * 0.02)),
-                ((tip_x + w * 0.12, y + h * 0.22), (tip_x + w * 0.24, y + h * 0.09)),
+                ((x, cy), (base_x, cy)),                              # anode lead
+                ((tip_x, cy), (x + w, cy)),                           # cathode lead
+                ((base_x, y + h * 0.2), (base_x, y + h * 0.8)),       # anode vertical
+                ((base_x, y + h * 0.2), (tip_x, cy)),                  # triangle upper edge
+                ((base_x, y + h * 0.8), (tip_x, cy)),                  # triangle lower edge
+                ((tip_x, y + h * 0.2), (tip_x, y + h * 0.8)),          # cathode bar
+                ((x + w * 0.72, y + h * 0.25), (x + w * 0.88, y + h * 0.05)),
+                ((x + w * 0.82, y + h * 0.32), (x + w * 0.98, y + h * 0.12)),
             ]
         elif self.kind == "inductor":
-            # coil: sequence of semi-arc bumps as line approximations
+            # Coils occupy the middle 70%, short leads on each side.
+            coil_start = x + w * 0.15
+            coil_end = x + w * 0.85
             coils = 4
-            coil_w = w * 0.6 / coils
-            start_x = cx - w * 0.3
+            coil_w = (coil_end - coil_start) / coils
             arc_pts = []
             for i in range(coils):
-                bx = start_x + i * coil_w + coil_w / 2
+                bx = coil_start + i * coil_w + coil_w / 2
                 for j in range(9):
                     a = math.pi - j * math.pi / 8
-                    arc_pts.append((bx + math.cos(a) * coil_w / 2, cy - math.sin(a) * h * 0.3))
+                    arc_pts.append((bx + math.cos(a) * coil_w / 2, cy - math.sin(a) * h * 0.35))
             for a_pt, b_pt in zip(arc_pts, arc_pts[1:]):
                 segs.append((a_pt, b_pt))
-            segs += [((x, cy), (start_x, cy)), ((start_x + coils * coil_w, cy), (x + w, cy))]
+            segs += [((x, cy), (coil_start, cy)), ((coil_end, cy), (x + w, cy))]
         elif self.kind == "voltage_source":
-            # circle + plus/minus labels inside (drawn as cross lines)
-            r = min(w, h) * 0.38
-            # circle approximated via extra_segments not possible directly;
-            # draw plus on right half and minus on left half
+            # Circle in the middle with leads to bbox edges; +/- inside.
+            r = min(w, h) * 0.35
             segs += [
-                ((x, cy), (cx - r, cy)),         # left lead
-                ((cx + r, cy), (x + w, cy)),     # right lead
+                ((x, cy), (cx - r, cy)),
+                ((cx + r, cy), (x + w, cy)),
                 # plus sign (right side)
                 ((cx + r * 0.4, cy), (cx + r * 0.8, cy)),
                 ((cx + r * 0.6, cy - r * 0.2), (cx + r * 0.6, cy + r * 0.2)),
