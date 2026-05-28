@@ -16,6 +16,7 @@ from engine.command import History
 from engine.guides import compute_guides
 from engine.renderer import Renderer
 from engine.selection import apply_group_resize, bounds_from_handle, handle_at, selection_bounds, shapes_in_rect
+from engine.text_style import TEXT_SIZE_MAX, TEXT_SIZE_MIN, apply_text_style as apply_text_style_to_shapes, clamp_font_size
 from io_utils.serializer import load_document, save_document
 
 
@@ -127,6 +128,7 @@ class VectorFlowApp(tk.Tk):
         self.text_align_var = tk.StringVar(value="居中")
         self.text_bold_var = tk.BooleanVar(value=False)
         self.text_color_var = tk.StringVar(value="#C0CAF5")
+        self.text_size_var = tk.IntVar(value=14)
         self.rotate_deg = tk.DoubleVar(value=15)
         self.scale_pct = tk.DoubleVar(value=120)
 
@@ -1021,28 +1023,31 @@ class VectorFlowApp(tk.Tk):
     def _open_inline_editor(self, wx: float, wy: float, initial_text: str = "") -> None:
         sx, sy = self.world_to_screen((wx, wy))
         self._inline_edit_shape = None
-        self._create_text_widget(int(sx), int(sy), initial_text, wx, wy)
+        self._create_text_widget(int(sx), int(sy), initial_text, wx, wy, self.text_size_var.get())
 
     def _open_inline_editor_for_shape(self, shape: FlowchartShape | TextShape) -> None:
+        self._sync_text_vars_from_shape(shape)
         if isinstance(shape, FlowchartShape):
             bounds = shape.bounds()
             cx, cy = (bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2
             sx, sy = self.world_to_screen((cx, cy))
             self._inline_edit_shape = shape
-            self._create_text_widget(int(sx) - 60, int(sy) - 12, shape.text, cx, cy)
+            self._create_text_widget(int(sx) - 60, int(sy) - 12, shape.text, cx, cy, shape.style.font_size)
         elif isinstance(shape, TextShape):
             sx, sy = self.world_to_screen((shape.x, shape.y))
             self._inline_edit_shape = shape
-            self._create_text_widget(int(sx), int(sy), shape.text, shape.x, shape.y)
+            self._create_text_widget(int(sx), int(sy), shape.text, shape.x, shape.y, shape.style.font_size)
 
-    def _create_text_widget(self, sx: int, sy: int, text: str, wx: float, wy: float) -> None:
+    def _create_text_widget(self, sx: int, sy: int, text: str, wx: float, wy: float, font_size: int | float | None = None) -> None:
         if self._inline_editor:
             self._commit_inline_editor()
         th = self._theme()
+        editor_size = clamp_font_size(font_size if font_size is not None else self.text_size_var.get())
+        editor_size = clamp_font_size(editor_size * self.zoom)
         editor = tk.Text(
             self.canvas, width=22, height=3, wrap=tk.WORD,
             bg=th["editor_bg"], fg=th["editor_fg"], insertbackground=th["editor_caret"],
-            font=("Microsoft YaHei", 11), relief=tk.SOLID, bd=1,
+            font=("Microsoft YaHei", editor_size), relief=tk.SOLID, bd=1,
             highlightbackground=th["editor_highlight"], highlightthickness=2,
         )
         editor.insert("1.0", text)
@@ -1072,7 +1077,13 @@ class VectorFlowApp(tk.Tk):
             target.text = text
         else:
             align = ALIGN_MAP.get(self.text_align_var.get(), "center")
-            style = ShapeStyle(fill=None, text_color=self.text_color_var.get(), text_align=align, bold=self.text_bold_var.get())
+            style = ShapeStyle(
+                fill=None,
+                text_color=self.text_color_var.get(),
+                text_align=align,
+                bold=self.text_bold_var.get(),
+                font_size=clamp_font_size(self.text_size_var.get()),
+            )
             self.document.add_shape(TextShape(wx, wy, text, style=style))
         self._inline_edit_shape = None
         self._push_history()
@@ -1137,16 +1148,37 @@ class VectorFlowApp(tk.Tk):
         if not self.selected_ids:
             return
         align = ALIGN_MAP.get(self.text_align_var.get(), "center")
-        bold = self.text_bold_var.get()
-        color = self.text_color_var.get()
+        changed = apply_text_style_to_shapes(
+            self.document.shapes,
+            self.selected_ids,
+            align=align,
+            bold=self.text_bold_var.get(),
+            color=self.text_color_var.get(),
+            font_size=self.text_size_var.get(),
+        )
+        if changed:
+            self.text_size_var.set(clamp_font_size(self.text_size_var.get()))
+            self._push_history()
+            self.redraw()
+
+    def _adjust_text_size(self, delta: int) -> None:
+        self.text_size_var.set(clamp_font_size(self.text_size_var.get() + delta))
+        if self.selected_ids:
+            self.apply_text_style()
+
+    def _sync_text_vars_from_shape(self, shape: FlowchartShape | TextShape) -> None:
+        inverse_align = {value: key for key, value in ALIGN_MAP.items()}
+        self.text_align_var.set(inverse_align.get(shape.style.text_align, "居中"))
+        self.text_bold_var.set(bool(shape.style.bold))
+        self.text_color_var.set(str(shape.style.text_color or "#C0CAF5"))
+        self.text_size_var.set(clamp_font_size(shape.style.font_size))
+
+    def _sync_text_vars_from_selection(self) -> None:
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
-            if shape:
-                shape.style.text_align = align
-                shape.style.bold = bold
-                shape.style.text_color = color
-        self._push_history()
-        self.redraw()
+            if isinstance(shape, (FlowchartShape, TextShape)):
+                self._sync_text_vars_from_shape(shape)
+                return
 
     # ── Property Dialogs ────────────────────────────────────────────
 
@@ -1191,6 +1223,7 @@ class VectorFlowApp(tk.Tk):
         ttk.Button(dlg, text="关闭", command=dlg.destroy).grid(row=r, column=0, columnspan=2, pady=10)
 
     def open_text_dialog(self) -> None:
+        self._sync_text_vars_from_selection()
         dlg = tk.Toplevel(self)
         dlg.title("文本样式")
         dlg.resizable(False, False)
@@ -1203,7 +1236,19 @@ class VectorFlowApp(tk.Tk):
         ttk.Checkbutton(dlg, variable=self.text_bold_var).grid(row=1, column=1, sticky=tk.W, **pad)
         ttk.Label(dlg, text="文字颜色").grid(row=2, column=0, sticky=tk.W, **pad)
         ttk.Button(dlg, textvariable=self.text_color_var, command=self.choose_text_color, width=14).grid(row=2, column=1, **pad)
-        ttk.Button(dlg, text="应用文本样式", command=lambda: (self.apply_text_style(), dlg.destroy())).grid(row=3, column=0, columnspan=2, pady=8)
+        ttk.Label(dlg, text="字号").grid(row=3, column=0, sticky=tk.W, **pad)
+        size_row = ttk.Frame(dlg)
+        size_row.grid(row=3, column=1, sticky=tk.W, **pad)
+        ttk.Button(size_row, text="A-", width=3, command=lambda: self._adjust_text_size(-2)).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(
+            size_row,
+            from_=TEXT_SIZE_MIN,
+            to=TEXT_SIZE_MAX,
+            textvariable=self.text_size_var,
+            width=5,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(size_row, text="A+", width=3, command=lambda: self._adjust_text_size(2)).pack(side=tk.LEFT)
+        ttk.Button(dlg, text="应用文本样式", command=lambda: (self.apply_text_style(), dlg.destroy())).grid(row=4, column=0, columnspan=2, pady=8)
 
     def open_transform_dialog(self) -> None:
         dlg = tk.Toplevel(self)
