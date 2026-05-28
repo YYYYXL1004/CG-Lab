@@ -6,8 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from core.document import Document
-from core.shapes import FlowchartShape, LineShape
+from core.shapes import ConnectorShape, FlowchartShape, LineShape
 from engine.command import History
+from engine.algorithm_replay import ReplayFrame
 from engine.renderer import Renderer
 
 
@@ -20,6 +21,34 @@ class RendererCommandTests(unittest.TestCase):
 
         self.assertEqual(image.mode, "RGBA")
         self.assertNotEqual(image.getpixel((10, 10)), image.getpixel((0, 0)))
+
+    def test_renderer_overlays_animated_connector_pixels(self):
+        document = Document()
+        start = document.add_shape(FlowchartShape(kind="process", x=5, y=10, width=20, height=10))
+        end = document.add_shape(FlowchartShape(kind="process", x=55, y=10, width=20, height=10))
+        document.add_connector(
+            ConnectorShape(start.id, end.id, "right", "left", kind="straight", arrow_end="none")
+        )
+
+        image = Renderer(90, 35).render(
+            document,
+            connector_animation_phase=0,
+            chrome={"connector_flow": "#00FF00"},
+        )
+
+        self.assertIn((0, 255, 0, 255), image.getdata())
+
+    def test_renderer_overlays_algorithm_replay_frame(self):
+        document = Document()
+        frame = ReplayFrame("测试回放", [(10, 10), (11, 10)])
+
+        image = Renderer(30, 25).render(
+            document,
+            replay_frame=frame,
+            chrome={"replay": "#FF0000"},
+        )
+
+        self.assertEqual(image.getpixel((10, 10)), (255, 0, 0, 255))
 
     def test_export_png_writes_file(self):
         document = Document()

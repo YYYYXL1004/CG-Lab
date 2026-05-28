@@ -12,6 +12,8 @@ from algorithms.fill import scanline_fill
 from algorithms.line import bresenham_line, dashed_line
 from core.document import Document
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from engine.animation import animated_flow_pixels
+from engine.algorithm_replay import ReplayFrame
 
 
 Color = tuple[int, int, int, int]
@@ -39,12 +41,16 @@ class Renderer:
         draft: bool = False,
         guides: list[tuple[str, float]] | None = None,
         chrome: dict | None = None,
+        connector_animation_phase: int | None = None,
+        replay_frame: ReplayFrame | None = None,
     ) -> Image.Image:
         ch = chrome or {}
         grid_color = ch.get("grid", "#2A2A3E")
         sel_color = ch.get("selection", "#5BA8FF")
         sel_handle_fill = ch.get("selection_handle_fill", "#1E1E2E")
         guide_color = ch.get("guide", "#FF4444")
+        connector_flow_color = ch.get("connector_flow", "#5BFFCF")
+        replay_color = ch.get("replay", "#FFCF5A")
         image = Image.new("RGBA", (self.width, self.height), _color(document.background))
         pixels = image.load()
         if show_grid:
@@ -52,11 +58,17 @@ class Renderer:
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
             self._draw_shape(image, pixels, shape, zoom, pan, draft=draft)
         for connector in document.connectors:
-            self._draw_connector(pixels, document, connector, zoom, pan)
+            self._draw_connector(
+                pixels, document, connector, zoom, pan,
+                animation_phase=connector_animation_phase,
+                flow_color=connector_flow_color,
+            )
         if selected_ids:
             self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan, sel_color, sel_handle_fill)
         if guides:
             self._draw_guides(pixels, guides, zoom, pan, guide_color)
+        if replay_frame is not None:
+            self._draw_replay_frame(pixels, replay_frame, zoom, pan, replay_color)
         return image
 
     def _draw_grid(self, pixels, grid_size: int, zoom: float, pan: tuple[float, float], color: str = "#2A2A3E") -> None:
@@ -124,16 +136,37 @@ class Renderer:
         connector: ConnectorShape,
         zoom: float,
         pan: tuple[float, float],
+        animation_phase: int | None = None,
+        flow_color: str = "#5BFFCF",
     ) -> None:
         points = [self._world_to_screen(point, zoom, pan) for point in document.connector_points(connector)]
         if len(points) < 2:
             return
         width = max(1, round(connector.style.stroke_width * zoom))
         _draw_polyline(pixels, points, connector.style.stroke, width, connector.style.dash or None)
+        if animation_phase is not None:
+            flow_pixels = animated_flow_pixels(
+                points,
+                phase=animation_phase,
+                spacing=max(10, round(24 * zoom)),
+                pulse_length=max(3, round(7 * zoom)),
+            )
+            _draw_points(pixels, flow_pixels, flow_color, max(2, width + 1))
         if connector.arrow_end != "none":
             _draw_arrowhead(pixels, points[-2], points[-1], connector.style.stroke, connector.arrow_end)
         if connector.arrow_start != "none":
             _draw_arrowhead(pixels, points[1], points[0], connector.style.stroke, connector.arrow_start)
+
+    def _draw_replay_frame(
+        self,
+        pixels,
+        frame: ReplayFrame,
+        zoom: float,
+        pan: tuple[float, float],
+        color: str = "#FFCF5A",
+    ) -> None:
+        points = [self._world_to_screen(point, zoom, pan) for point in frame.points]
+        _draw_points(pixels, points, color, 3)
 
     def _draw_selection(self, pixels, bounds: tuple[float, float, float, float], zoom: float, pan: tuple[float, float], color: str = "#5BA8FF", handle_fill: str = "#1E1E2E") -> None:
         x1, y1 = self._world_to_screen((bounds[0], bounds[1]), zoom, pan)

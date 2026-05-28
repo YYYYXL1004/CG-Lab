@@ -9,8 +9,9 @@ from PIL import ImageTk
 
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, Shape, TextShape
 from core.style import ShapeStyle
+from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.command import History
 from engine.guides import compute_guides
 from engine.renderer import Renderer
@@ -91,6 +92,7 @@ class VectorFlowApp(tk.Tk):
         self.title("VectorFlow - 矢量流程图编辑系统")
         self.geometry("1280x780")
         self.minsize(980, 640)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.document = Document()
         self.file_path: Path | None = None
@@ -99,6 +101,7 @@ class VectorFlowApp(tk.Tk):
         self.zoom = 1.0
         self.pan = (40.0, 40.0)
         self.show_grid = tk.BooleanVar(value=True)
+        self.animate_connectors = tk.BooleanVar(value=True)
         self.current_tool = tk.StringVar(value="select")
         self.pending_flow_kind = "process"
         self.selected_ids: set[str] = set()
@@ -146,6 +149,12 @@ class VectorFlowApp(tk.Tk):
         self._space_pan_start: tuple[int, int] | None = None
         self._space_pan_origin: tuple[float, float] | None = None
         self._freehand_points: list[tuple[float, float]] = []
+        self._connector_animation_phase: int = 0
+        self._connector_animation_after_id: str | None = None
+        self._replay_sequence: ReplaySequence | None = None
+        self._replay_frame: ReplayFrame | None = None
+        self._replay_index: int = 0
+        self._replay_after_id: str | None = None
 
         self._configure_style()
         self._build_menu()
@@ -156,6 +165,7 @@ class VectorFlowApp(tk.Tk):
         self.document.background = self._theme()["canvas_bg"]
         self.history.push(self.document.to_dict())
         self.redraw()
+        self._schedule_connector_animation()
 
     def _theme(self) -> dict[str, str]:
         return THEMES[self.theme_name]
@@ -282,6 +292,8 @@ class VectorFlowApp(tk.Tk):
         edit_row = _make_group(top, "编辑")
         self.undo_btn = ttk.Button(edit_row, text="↶ 撤销", style="Tool.TButton", command=self.undo)
         self.undo_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(edit_row, text="▶ 算法回放", style="Tool.TButton",
+                   command=self.play_algorithm_replay).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(edit_row, text="✕ 清屏", style="Tool.TButton",
                    command=self.clear_canvas).pack(side=tk.LEFT, padx=2, pady=4)
 
@@ -306,6 +318,8 @@ class VectorFlowApp(tk.Tk):
                    command=self.toggle_theme).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Checkbutton(view_row, text="▦ 网格", variable=self.show_grid,
                         command=self.redraw).pack(side=tk.LEFT, padx=6, pady=4)
+        ttk.Checkbutton(view_row, text="流动线", variable=self.animate_connectors,
+                        command=self._on_connector_animation_toggle).pack(side=tk.LEFT, padx=6, pady=4)
         ttk.Button(view_row, text="⬇ 导出 PNG", style="Tool.TButton",
                    command=self.export_png).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(view_row, text="⬆ 保存", style="Accent.TButton",
@@ -583,13 +597,101 @@ class VectorFlowApp(tk.Tk):
             "selection": th["selection"],
             "selection_handle_fill": th["selection_handle_fill"],
             "guide": th["guide"],
+            "connector_flow": "#5BFFCF",
+            "replay": "#FFCF5A",
         }
-        image = self.renderer.render(self.document, self.zoom, self.pan, self.selected_ids, self.show_grid.get(), draft=draft, guides=self._guides or None, chrome=chrome)
+        phase = self._connector_animation_phase if self.animate_connectors.get() else None
+        image = self.renderer.render(
+            self.document,
+            self.zoom,
+            self.pan,
+            self.selected_ids,
+            self.show_grid.get(),
+            draft=draft,
+            guides=self._guides or None,
+            chrome=chrome,
+            connector_animation_phase=phase,
+            replay_frame=self._replay_frame,
+        )
         self.photo = ImageTk.PhotoImage(image)
         self.canvas.delete("render")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="render")
         self.canvas.tag_lower("render")
         self._update_status()
+
+    def _on_connector_animation_toggle(self) -> None:
+        self.redraw(draft=True)
+
+    def _schedule_connector_animation(self) -> None:
+        if self._connector_animation_after_id is not None:
+            return
+        self._connector_animation_after_id = self.after(90, self._tick_connector_animation)
+
+    def _tick_connector_animation(self) -> None:
+        self._connector_animation_after_id = None
+        if self.animate_connectors.get() and self.document.connectors and self._replay_sequence is None:
+            self._connector_animation_phase = (self._connector_animation_phase + 2) % 100_000
+            self.redraw(draft=True)
+        self._schedule_connector_animation()
+
+    def play_algorithm_replay(self) -> None:
+        if self._replay_sequence is not None:
+            self.stop_algorithm_replay()
+            return
+        shape = self._selected_shape_for_replay()
+        if shape is None:
+            self._update_status("请先选中一个图形，再点击算法回放")
+            return
+        self._replay_sequence = build_shape_replay(shape)
+        self._replay_index = 0
+        self._advance_algorithm_replay()
+
+    def _selected_shape_for_replay(self) -> Shape | None:
+        for shape_id in self.selected_ids:
+            shape = self.document.find_shape(shape_id)
+            if shape is not None:
+                return shape
+        return None
+
+    def _advance_algorithm_replay(self) -> None:
+        self._replay_after_id = None
+        sequence = self._replay_sequence
+        if sequence is None:
+            return
+        if self._replay_index >= len(sequence.frames):
+            self._replay_after_id = self.after(650, self.stop_algorithm_replay)
+            return
+        self._replay_frame = sequence.frames[self._replay_index]
+        current = self._replay_index + 1
+        total = len(sequence.frames)
+        self._replay_index += 1
+        self.redraw(draft=True)
+        self.status_text.set(f"算法回放: {sequence.title} | {self._replay_frame.label} {current}/{total}")
+        self._replay_after_id = self.after(70, self._advance_algorithm_replay)
+
+    def stop_algorithm_replay(self, redraw: bool = True) -> None:
+        if self._replay_after_id is not None:
+            try:
+                self.after_cancel(self._replay_after_id)
+            except tk.TclError:
+                pass
+        had_replay = self._replay_sequence is not None or self._replay_frame is not None
+        self._replay_after_id = None
+        self._replay_sequence = None
+        self._replay_frame = None
+        self._replay_index = 0
+        if redraw and had_replay:
+            self.redraw(draft=True)
+
+    def _on_close(self) -> None:
+        self.stop_algorithm_replay(redraw=False)
+        if self._connector_animation_after_id is not None:
+            try:
+                self.after_cancel(self._connector_animation_after_id)
+            except tk.TclError:
+                pass
+            self._connector_animation_after_id = None
+        self.destroy()
 
     def _update_status(self, msg: str | None = None) -> None:
         self.undo_btn.config(state=tk.NORMAL if self.history.can_undo else tk.DISABLED)
@@ -620,6 +722,7 @@ class VectorFlowApp(tk.Tk):
         if self._inline_editor:
             self._commit_inline_editor()
             return
+        self.stop_algorithm_replay(redraw=False)
         if self._space_held:
             self._space_pan_start = (event.x, event.y)
             self._space_pan_origin = self.pan
@@ -1147,6 +1250,7 @@ class VectorFlowApp(tk.Tk):
 
     def clear_selection(self) -> None:
         self._commit_inline_editor()
+        self.stop_algorithm_replay(redraw=False)
         self.selected_ids.clear()
         self.connector_start_id = None
         if self._freehand_points:
