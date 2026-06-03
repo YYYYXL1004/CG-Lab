@@ -16,10 +16,16 @@ class Document:
     snap_enabled: bool = True
     shapes: list[Shape] = field(default_factory=list)
     connectors: list[ConnectorShape] = field(default_factory=list)
+    _shape_index: dict[str, Shape] = field(default_factory=dict, init=False, repr=False)
+    _shape_index_signature: tuple[int, int] = field(default=(0, -1), init=False, repr=False)
 
     def add_shape(self, shape: Shape) -> Shape:
+        if self._current_shape_index_signature() != self._shape_index_signature:
+            self._rebuild_shape_index()
         shape.z_order = len(self.shapes)
         self.shapes.append(shape)
+        self._shape_index[shape.id] = shape
+        self._shape_index_signature = self._current_shape_index_signature()
         return shape
 
     def add_connector(self, connector: ConnectorShape) -> ConnectorShape:
@@ -27,10 +33,7 @@ class Document:
         return connector
 
     def find_shape(self, shape_id: str) -> Shape | None:
-        for shape in self.shapes:
-            if shape.id == shape_id:
-                return shape
-        return None
+        return self._shapes_by_id().get(shape_id)
 
     def shape_at(self, x: float, y: float) -> Shape | None:
         for shape in sorted(self.shapes, key=lambda item: item.z_order, reverse=True):
@@ -54,6 +57,7 @@ class Document:
             and connector.start_shape_id not in selected
             and connector.end_shape_id not in selected
         ]
+        self._rebuild_shape_index()
 
     def copy_paste(self, shape_ids: list[str], offset: tuple[float, float] = (28, 28)) -> list[Shape]:
         selected = set(shape_ids)
@@ -133,6 +137,20 @@ class Document:
         self.snap_enabled = replacement.snap_enabled
         self.shapes = replacement.shapes
         self.connectors = replacement.connectors
+        self._rebuild_shape_index()
+
+    def _shapes_by_id(self) -> dict[str, Shape]:
+        signature = self._current_shape_index_signature()
+        if signature != self._shape_index_signature:
+            self._rebuild_shape_index()
+        return self._shape_index
+
+    def _rebuild_shape_index(self) -> None:
+        self._shape_index = {shape.id: shape for shape in self.shapes}
+        self._shape_index_signature = self._current_shape_index_signature()
+
+    def _current_shape_index_signature(self) -> tuple[int, int]:
+        return id(self.shapes), len(self.shapes)
 
 
 def _new_like_id(shape: Shape) -> str:

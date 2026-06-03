@@ -50,6 +50,16 @@ def handle_at(bounds: Bounds | None, point: Point, tolerance: float = 7) -> str 
     for name, (hx, hy) in handles.items():
         if abs(px - hx) <= tolerance and abs(py - hy) <= tolerance:
             return name
+    if y1 - tolerance <= py <= y2 + tolerance:
+        if abs(px - x2) <= tolerance:
+            return "e"
+        if abs(px - x1) <= tolerance:
+            return "w"
+    if x1 - tolerance <= px <= x2 + tolerance:
+        if abs(py - y1) <= tolerance:
+            return "n"
+        if abs(py - y2) <= tolerance:
+            return "s"
     return None
 
 

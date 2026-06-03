@@ -8,10 +8,12 @@ from app import (
     REQUIRED_THEME_TOKENS,
     THEMES,
     TOOL_SPECS,
+    flow_pick_hint,
     format_status_parts,
     inspector_context_for,
     missing_theme_tokens,
     tool_hint,
+    viewport_center_world,
 )
 from core.document import Document
 from core.shapes import CurveShape, FlowchartShape, LineShape, TextShape
@@ -67,6 +69,19 @@ class UiShellTests(unittest.TestCase):
         self.assertIn("坐标: (12, 99)", parts)
         self.assertIn("可撤销", parts)
         self.assertEqual(parts[-1], "拖拽移动选中图形")
+
+    def test_viewport_center_world_accounts_for_zoom_and_pan(self):
+        self.assertEqual(
+            viewport_center_world(canvas_width=800, canvas_height=600, zoom=2.0, pan=(100, 50)),
+            (150.0, 125.0),
+        )
+
+    def test_flow_pick_hint_names_click_and_double_click_workflow(self):
+        hint = flow_pick_hint("process")
+
+        self.assertIn("process", hint)
+        self.assertIn("单击画布", hint)
+        self.assertIn("双击图形库", hint)
 
 
 if __name__ == "__main__":

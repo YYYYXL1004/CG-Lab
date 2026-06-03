@@ -26,6 +26,11 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(handle_at((10, 20, 110, 90), (60, 90), tolerance=6), "s")
         self.assertIsNone(handle_at((10, 20, 110, 90), (60, 60), tolerance=6))
 
+    def test_handle_at_detects_resize_edges_between_handles(self):
+        self.assertEqual(handle_at((10, 20, 110, 90), (110, 36), tolerance=6), "e")
+        self.assertEqual(handle_at((10, 20, 110, 90), (36, 20), tolerance=6), "n")
+        self.assertIsNone(handle_at((10, 20, 110, 90), (60, 55), tolerance=6))
+
     def test_bounds_from_handle_keeps_opposite_corner_fixed(self):
         bounds = bounds_from_handle((10, 20, 110, 90), "se", (160, 130))
         self.assertEqual(bounds, (10, 20, 160, 130))

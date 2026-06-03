@@ -6,13 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from PIL import ImageTk
-
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, Shape, TextShape
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
+from engine.canvas_renderer import CanvasRenderer
 from engine.command import History
 from engine.guides import compute_guides
 from engine.renderer import Renderer
@@ -92,6 +91,20 @@ def tool_hint(tool: str) -> str:
 
 def tool_label(tool: str) -> str:
     return TOOL_SPECS.get(tool, TOOL_SPECS["select"]).label
+
+
+def flow_pick_hint(kind: str) -> str:
+    return f"已选择图形: {kind}，单击画布放置；双击图形库可直接放到视口中心"
+
+
+def viewport_center_world(
+    *,
+    canvas_width: int,
+    canvas_height: int,
+    zoom: float,
+    pan: tuple[float, float],
+) -> tuple[float, float]:
+    return (canvas_width / 2 - pan[0]) / zoom, (canvas_height / 2 - pan[1]) / zoom
 
 
 def _selected_shapes(document: Document, selected_ids: set[str]) -> list[Shape]:
@@ -222,12 +235,11 @@ class VectorFlowApp(tk.Tk):
 
         self.document = Document()
         self.file_path: Path | None = None
-        self.renderer = Renderer(CANVAS_WIDTH, CANVAS_HEIGHT)
-        self.photo = None
+        self.canvas_renderer: CanvasRenderer | None = None
         self.zoom = 1.0
         self.pan = (40.0, 40.0)
         self.show_grid = tk.BooleanVar(value=True)
-        self.animate_connectors = tk.BooleanVar(value=True)
+        self.animate_connectors = tk.BooleanVar(value=False)
         self.current_tool = tk.StringVar(value="select")
         self.pending_flow_kind = "process"
         self.selected_ids: set[str] = set()
@@ -282,6 +294,8 @@ class VectorFlowApp(tk.Tk):
         self._freehand_points: list[tuple[float, float]] = []
         self._connector_animation_phase: int = 0
         self._connector_animation_after_id: str | None = None
+        self._pending_redraw_after_id: str | None = None
+        self._pending_redraw_draft: bool = False
         self._replay_sequence: ReplaySequence | None = None
         self._replay_frame: ReplayFrame | None = None
         self._replay_index: int = 0
@@ -476,7 +490,8 @@ class VectorFlowApp(tk.Tk):
         rail.pack_propagate(False)
         for tool, spec in TOOL_SPECS.items():
             label = spec.label if not spec.shortcut else f"{spec.label}\n{spec.shortcut}"
-            button = ttk.Button(rail, text=label, style="Tool.TButton", command=lambda t=tool: self.set_tool(t))
+            command = self._on_curve_button if tool == "curve" else (lambda t=tool: self.set_tool(t))
+            button = ttk.Button(rail, text=label, style="Tool.TButton", command=command)
             button.pack(fill=tk.X, padx=6, pady=4)
             self._tool_buttons[tool] = button
             if tool == "curve":
@@ -503,6 +518,7 @@ class VectorFlowApp(tk.Tk):
                 ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=4, pady=2)
             for text, kind in items:
                 btn = ttk.Button(inner, text=text, command=lambda k=kind: self.pick_flow_shape(k))
+                btn.bind("<Double-ButtonRelease-1>", lambda _e, k=kind: (self.place_flow_shape_at_view_center(k), "break")[1])
                 btn.pack(fill=tk.X, padx=4, pady=2)
             inner.update_idletasks()
             canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
@@ -554,6 +570,7 @@ class VectorFlowApp(tk.Tk):
         self.canvas.bind("<B2-Motion>", self.on_pan_drag)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Motion>", self.on_mouse_move)
+        self.canvas_renderer = CanvasRenderer(self.canvas)
 
     def _build_inspector(self, parent: tk.Widget) -> None:
         self._inspector_frame = ttk.Frame(parent, style="Panel.TFrame", width=260)
@@ -770,6 +787,21 @@ class VectorFlowApp(tk.Tk):
     def pick_flow_shape(self, kind: str) -> None:
         self.pending_flow_kind = kind
         self.set_tool("flow")
+        self._status_hint = flow_pick_hint(kind)
+        self._update_status()
+
+    def place_flow_shape_at_view_center(self, kind: str | None = None) -> None:
+        if kind is not None:
+            self.pending_flow_kind = kind
+        wx, wy = viewport_center_world(
+            canvas_width=max(1, self.canvas.winfo_width()),
+            canvas_height=max(1, self.canvas.winfo_height()),
+            zoom=self.zoom,
+            pan=self.pan,
+        )
+        self.place_flow_shape(wx, wy)
+        self._push_history()
+        self.set_tool("select")
 
     # ── Pen panel (curve tool's floating property popup) ────────────
 
@@ -849,11 +881,28 @@ class VectorFlowApp(tk.Tk):
 
     # ── Rendering ───────────────────────────────────────────────────
 
+    def request_redraw(self, draft: bool = False) -> None:
+        self._pending_redraw_draft = self._pending_redraw_draft or draft
+        if self._pending_redraw_after_id is not None:
+            return
+        self._pending_redraw_after_id = self.after_idle(self._flush_pending_redraw)
+
+    def _flush_pending_redraw(self) -> None:
+        draft = self._pending_redraw_draft
+        self._pending_redraw_after_id = None
+        self._pending_redraw_draft = False
+        self.redraw(draft=draft)
+
     def redraw(self, draft: bool = False) -> None:
-        width = max(1, self.canvas.winfo_width())
-        height = max(1, self.canvas.winfo_height())
-        if self.renderer is None or self.renderer.width != width or self.renderer.height != height:
-            self.renderer = Renderer(width, height)
+        if self._pending_redraw_after_id is not None:
+            try:
+                self.after_cancel(self._pending_redraw_after_id)
+            except tk.TclError:
+                pass
+            self._pending_redraw_after_id = None
+            self._pending_redraw_draft = False
+        if self.canvas_renderer is None:
+            self.canvas_renderer = CanvasRenderer(self.canvas)
         th = self._theme()
         chrome = {
             "grid": th["grid"],
@@ -864,7 +913,7 @@ class VectorFlowApp(tk.Tk):
             "replay": "#FFCF5A",
         }
         phase = self._connector_animation_phase if self.animate_connectors.get() else None
-        image = self.renderer.render(
+        self.canvas_renderer.render(
             self.document,
             self.zoom,
             self.pan,
@@ -876,17 +925,25 @@ class VectorFlowApp(tk.Tk):
             connector_animation_phase=phase,
             replay_frame=self._replay_frame,
         )
-        self.photo = ImageTk.PhotoImage(image)
-        self.canvas.delete("render")
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="render")
-        self.canvas.tag_lower("render")
+        self.canvas.tag_raise("preview")
+        self.canvas.tag_raise("inline_editor")
         self._rebuild_inspector()
         self._update_status()
 
     def _on_connector_animation_toggle(self) -> None:
+        if self.animate_connectors.get():
+            self._schedule_connector_animation()
+        elif self._connector_animation_after_id is not None:
+            try:
+                self.after_cancel(self._connector_animation_after_id)
+            except tk.TclError:
+                pass
+            self._connector_animation_after_id = None
         self.redraw(draft=True)
 
     def _schedule_connector_animation(self) -> None:
+        if not self.animate_connectors.get():
+            return
         if self._connector_animation_after_id is not None:
             return
         self._connector_animation_after_id = self.after(90, self._tick_connector_animation)
@@ -895,7 +952,7 @@ class VectorFlowApp(tk.Tk):
         self._connector_animation_after_id = None
         if self.animate_connectors.get() and self.document.connectors and self._replay_sequence is None:
             self._connector_animation_phase = (self._connector_animation_phase + 2) % 100_000
-            self.redraw(draft=True)
+            self.request_redraw(draft=True)
         self._schedule_connector_animation()
 
     def play_algorithm_replay(self) -> None:
@@ -929,7 +986,7 @@ class VectorFlowApp(tk.Tk):
         current = self._replay_index + 1
         total = len(sequence.frames)
         self._replay_index += 1
-        self.redraw(draft=True)
+        self.request_redraw(draft=True)
         self.status_text.set(f"算法回放: {sequence.title} | {self._replay_frame.label} {current}/{total}")
         self._replay_after_id = self.after(70, self._advance_algorithm_replay)
 
@@ -955,6 +1012,12 @@ class VectorFlowApp(tk.Tk):
             except tk.TclError:
                 pass
             self._connector_animation_after_id = None
+        if self._pending_redraw_after_id is not None:
+            try:
+                self.after_cancel(self._pending_redraw_after_id)
+            except tk.TclError:
+                pass
+            self._pending_redraw_after_id = None
         self.destroy()
 
     def _update_status(self, msg: str | None = None) -> None:
@@ -975,14 +1038,14 @@ class VectorFlowApp(tk.Tk):
     # ── Mouse events ────────────────────────────────────────────────
 
     def on_canvas_resize(self, _event) -> None:
-        self.redraw()
+        self.request_redraw(draft=True)
 
     def on_mouse_move(self, event) -> None:
         if self._space_held and self._space_pan_start is not None and self._space_pan_origin is not None:
             dx = event.x - self._space_pan_start[0]
             dy = event.y - self._space_pan_start[1]
             self.pan = (self._space_pan_origin[0] + dx, self._space_pan_origin[1] + dy)
-            self.redraw(draft=True)
+            self.request_redraw(draft=True)
             return
         x, y = self.screen_to_world(event.x, event.y)
         self.status_text.set(" | ".join(format_status_parts(
@@ -1076,11 +1139,11 @@ class VectorFlowApp(tk.Tk):
                 self.drag_shape_origin = (current[0] + snap_dx, current[1] + snap_dy)
                 self.drag_total_delta = (self.drag_total_delta[0] + snap_dx, self.drag_total_delta[1] + snap_dy)
             self._guides = guides
-            self.redraw(draft=True)
+            self.request_redraw(draft=True)
         elif tool == "select" and self.drag_mode == "resize" and self.resize_handle:
             new_bounds = bounds_from_handle(self.resize_original_bounds, self.resize_handle, current)
             apply_group_resize(self.document, self.selected_ids, self.resize_original_payloads, self.resize_original_bounds, new_bounds)
-            self.redraw(draft=True)
+            self.request_redraw(draft=True)
         elif tool == "select" and self.drag_mode == "box_select":
             self.canvas.delete("preview")
             x0, y0 = self.world_to_screen(self.drag_start)
@@ -1212,7 +1275,7 @@ class VectorFlowApp(tk.Tk):
         dy = event.y - self.drag_start[1]
         self.pan = (self.pan[0] + dx, self.pan[1] + dy)
         self.drag_start = (event.x, event.y)
-        self.redraw(draft=True)
+        self.request_redraw(draft=True)
 
     def on_mouse_wheel(self, event) -> None:
         factor = 1.1 if event.delta > 0 else 1 / 1.1
@@ -1386,8 +1449,8 @@ class VectorFlowApp(tk.Tk):
         if not path:
             return
         w, h = max(1, self.canvas.winfo_width()), max(1, self.canvas.winfo_height())
-        r = Renderer(w, h)
-        img = r.render(self.document, self.zoom, self.pan, set(), self.show_grid.get())
+        renderer = Renderer(w, h)
+        img = renderer.render(self.document, self.zoom, self.pan, set(), self.show_grid.get())
         img.crop((left, top_y, right, bottom)).save(path, "PNG")
         self._update_status(f"已导出区域: {path}")
 
@@ -1684,7 +1747,9 @@ class VectorFlowApp(tk.Tk):
         path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
         if not path:
             return
-        image = self.renderer.render(self.document, self.zoom, self.pan, set(), self.show_grid.get())
+        width = max(1, self.canvas.winfo_width())
+        height = max(1, self.canvas.winfo_height())
+        image = Renderer(width, height).render(self.document, self.zoom, self.pan, set(), self.show_grid.get())
         image.save(path, format="PNG")
         self._update_status(f"已导出: {path}")
 

@@ -78,6 +78,37 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual([shape.id for shape in document.shapes], [b.id])
         self.assertEqual(document.connectors, [])
 
+    def test_connector_points_uses_shape_index_instead_of_repeated_shape_scans(self):
+        class CountingList(list):
+            iterations = 0
+
+            def __iter__(self):
+                self.iterations += 1
+                return super().__iter__()
+
+        document = Document()
+        document.shapes = CountingList()
+        start = document.add_shape(FlowchartShape("process", 0, 0, 80, 40))
+        end = document.add_shape(FlowchartShape("process", 120, 0, 80, 40))
+        connector = ConnectorShape(start.id, end.id, "right", "left", kind="straight")
+        document.shapes.iterations = 0
+
+        points = document.connector_points(connector)
+
+        self.assertEqual(points, [start.anchor("right"), end.anchor("left")])
+        self.assertLessEqual(document.shapes.iterations, 1)
+
+    def test_shape_index_drops_ids_after_direct_shape_list_clear(self):
+        document = Document()
+        old_shape = document.add_shape(FlowchartShape("process", 0, 0, 80, 40))
+        self.assertIs(document.find_shape(old_shape.id), old_shape)
+
+        document.shapes.clear()
+        new_shape = document.add_shape(FlowchartShape("process", 120, 0, 80, 40))
+
+        self.assertIsNone(document.find_shape(old_shape.id))
+        self.assertIs(document.find_shape(new_shape.id), new_shape)
+
 
 if __name__ == "__main__":
     unittest.main()
