@@ -270,6 +270,7 @@ class VectorFlowApp(tk.Tk):
         self._lib_canvases: list[tk.Canvas] = []  # 侧边栏内 tk.Canvas 引用（toggle 时需 reconfigure bg）
         self._tool_buttons: dict[str, ttk.Button] = {}
         self._inspector_frame: ttk.Frame | None = None
+        self._inspector_context_key: tuple[str, tuple[str, ...], str] | None = None
         self._status_hint: str | None = None
 
         self._inline_editor: tk.Text | None = None
@@ -325,6 +326,8 @@ class VectorFlowApp(tk.Tk):
         # pen panel 颜色硬编码在创建时，关掉让用户重新打开即可
         self._close_pen_panel()
         self.theme_btn_label.set(th["toggle_label"])
+        self._update_tool_button_states()
+        self._rebuild_inspector(force=True)
         self.redraw()
 
     def _configure_style(self) -> None:
@@ -630,10 +633,124 @@ class VectorFlowApp(tk.Tk):
             if button.winfo_exists():
                 button.configure(style="SelectedTool.TButton" if tool == active else "Tool.TButton")
 
-    def _rebuild_inspector(self) -> None:
-        # Filled by the inspector builder; kept as a safe no-op while layout
-        # pieces initialize during startup.
-        return
+    def _rebuild_inspector(self, *, force: bool = False) -> None:
+        frame = self._inspector_frame
+        if frame is None or not frame.winfo_exists():
+            return
+        context = inspector_context_for(self.document, self.selected_ids, self.current_tool.get())
+        key = (context, tuple(sorted(self.selected_ids)), self.current_tool.get())
+        if not force and key == self._inspector_context_key:
+            return
+        self._inspector_context_key = key
+        for child in frame.winfo_children():
+            child.destroy()
+        if context == "pen":
+            self._build_pen_inspector(frame)
+        elif context == "connector_tool":
+            self._build_connector_inspector(frame)
+        elif context == "text_shape":
+            self._build_shape_inspector(frame, include_text=True)
+        elif context == "shape":
+            self._build_shape_inspector(frame, include_text=False)
+        elif context == "multi":
+            self._build_multi_inspector(frame)
+        else:
+            self._build_canvas_inspector(frame)
+
+    def _inspector_title(self, parent: tk.Widget, title: str, caption: str) -> None:
+        ttk.Label(parent, text=title, font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=12, pady=(12, 2))
+        ttk.Label(parent, text=caption, style="Group.TLabel").pack(anchor=tk.W, padx=12, pady=(0, 8))
+
+    def _inspector_button(self, parent: tk.Widget, text: str, command, style: str = "Tool.TButton") -> None:
+        ttk.Button(parent, text=text, style=style, command=command).pack(fill=tk.X, padx=12, pady=3)
+
+    def _inspector_label(self, parent: tk.Widget, text: str) -> None:
+        ttk.Label(parent, text=text).pack(anchor=tk.W, padx=12, pady=(8, 2))
+
+    def _sync_style_vars_from_selection(self) -> None:
+        for sid in self.selected_ids:
+            shape = self.document.find_shape(sid)
+            if shape is not None:
+                self.stroke_color.set(str(shape.style.stroke or ""))
+                self.fill_color.set(str(shape.style.fill or ""))
+                self.stroke_width.set(int(shape.style.stroke_width))
+                return
+
+    def _build_canvas_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "画布", "未选择对象")
+        ttk.Checkbutton(parent, text="显示网格", variable=self.show_grid, command=self.redraw).pack(anchor=tk.W, padx=12, pady=3)
+        ttk.Checkbutton(parent, text="流动连接线", variable=self.animate_connectors,
+                        command=self._on_connector_animation_toggle).pack(anchor=tk.W, padx=12, pady=3)
+        self._inspector_button(parent, "重置视图 100%", self.reset_view)
+        self._inspector_button(parent, "导出 PNG", self.export_png, "Accent.TButton")
+
+    def _build_pen_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "画笔", "仅作用于新绘制曲线")
+        ttk.Button(parent, textvariable=self.pen_color, command=self._choose_pen_color).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "线宽")
+        ttk.Spinbox(parent, from_=1, to=12, textvariable=self.pen_width, width=8).pack(anchor=tk.W, padx=12, pady=3)
+        self._inspector_label(parent, "笔型")
+        ttk.Combobox(parent, textvariable=self.pen_dash, values=list(DASH_PRESETS.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "平滑度")
+        ttk.Scale(parent, from_=1, to=5, variable=self.pen_smoothness,
+                  orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=3)
+
+    def _build_connector_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "连接线", "设置新连接线样式")
+        self._inspector_label(parent, "线型")
+        ttk.Combobox(parent, textvariable=self.conn_kind_var, values=list(CONN_KINDS.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "起点箭头")
+        ttk.Combobox(parent, textvariable=self.conn_arrow_start_var, values=list(ARROW_MAP.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "终点箭头")
+        ttk.Combobox(parent, textvariable=self.conn_arrow_end_var, values=list(ARROW_MAP.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "线条样式")
+        ttk.Combobox(parent, textvariable=self.conn_dash_var, values=list(DASH_PRESETS.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+
+    def _build_shape_inspector(self, parent: tk.Widget, *, include_text: bool) -> None:
+        self._sync_style_vars_from_selection()
+        if include_text:
+            self._sync_text_vars_from_selection()
+        self._inspector_title(parent, "属性", "编辑当前选中图形")
+        self._inspector_label(parent, "填充")
+        ttk.Button(parent, textvariable=self.fill_color, command=self.choose_fill).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "描边")
+        ttk.Button(parent, textvariable=self.stroke_color, command=self.choose_stroke).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "线宽")
+        ttk.Spinbox(parent, from_=1, to=12, textvariable=self.stroke_width, width=8).pack(anchor=tk.W, padx=12, pady=3)
+        self._inspector_button(parent, "应用图形样式", self.apply_style)
+        if include_text:
+            ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+            self._inspector_label(parent, "文字对齐")
+            ttk.Combobox(parent, textvariable=self.text_align_var, values=list(ALIGN_MAP.keys()),
+                         state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
+            ttk.Checkbutton(parent, text="加粗", variable=self.text_bold_var).pack(anchor=tk.W, padx=12, pady=3)
+            self._inspector_label(parent, "文字颜色")
+            ttk.Button(parent, textvariable=self.text_color_var, command=self.choose_text_color).pack(fill=tk.X, padx=12, pady=3)
+            self._inspector_label(parent, "字号")
+            ttk.Spinbox(parent, from_=TEXT_SIZE_MIN, to=TEXT_SIZE_MAX,
+                        textvariable=self.text_size_var, width=8).pack(anchor=tk.W, padx=12, pady=3)
+            self._inspector_button(parent, "应用文本样式", self.apply_text_style)
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+        self._inspector_button(parent, "旋转", self._do_rotate)
+        self._inspector_button(parent, "缩放", self._do_scale)
+        self._inspector_button(parent, "水平翻转", self.flip_horizontal)
+        self._inspector_button(parent, "垂直翻转", self.flip_vertical)
+        self._inspector_button(parent, "复制", self.copy_selection)
+        self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
+
+    def _build_multi_inspector(self, parent: tk.Widget) -> None:
+        self._sync_style_vars_from_selection()
+        self._inspector_title(parent, "多选", f"已选择 {len(self.selected_ids)} 个图形")
+        self._inspector_button(parent, "应用图形样式", self.apply_style)
+        self._inspector_button(parent, "旋转", self._do_rotate)
+        self._inspector_button(parent, "缩放", self._do_scale)
+        self._inspector_button(parent, "复制", self.copy_selection)
+        self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
 
     def set_tool(self, tool: str) -> None:
         self._commit_inline_editor()
@@ -763,6 +880,7 @@ class VectorFlowApp(tk.Tk):
         self.canvas.delete("render")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="render")
         self.canvas.tag_lower("render")
+        self._rebuild_inspector()
         self._update_status()
 
     def _on_connector_animation_toggle(self) -> None:
