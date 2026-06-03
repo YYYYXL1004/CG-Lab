@@ -962,9 +962,14 @@ class VectorFlowApp(tk.Tk):
         if msg:
             self.status_text.set(msg)
             return
-        parts = [f"工具: {self.current_tool.get()}", f"缩放: {round(self.zoom * 100)}%", f"图形: {len(self.document.shapes)}"]
-        if self.history.can_undo:
-            parts.append("可撤销")
+        parts = format_status_parts(
+            tool=self.current_tool.get(),
+            zoom=self.zoom,
+            shape_count=len(self.document.shapes),
+            selection_count=len(self.selected_ids),
+            hint=self._status_hint or tool_hint(self.current_tool.get()),
+            can_undo=self.history.can_undo,
+        )
         self.status_text.set(" | ".join(parts))
 
     # ── Mouse events ────────────────────────────────────────────────
@@ -980,7 +985,15 @@ class VectorFlowApp(tk.Tk):
             self.redraw(draft=True)
             return
         x, y = self.screen_to_world(event.x, event.y)
-        self.status_text.set(f"工具: {self.current_tool.get()} | ({round(x)}, {round(y)}) | 缩放: {round(self.zoom * 100)}%")
+        self.status_text.set(" | ".join(format_status_parts(
+            tool=self.current_tool.get(),
+            zoom=self.zoom,
+            shape_count=len(self.document.shapes),
+            selection_count=len(self.selected_ids),
+            cursor=(x, y),
+            hint=self._status_hint or tool_hint(self.current_tool.get()),
+            can_undo=self.history.can_undo,
+        )))
 
     def on_left_down(self, event) -> None:
         if self._inline_editor:
@@ -1030,11 +1043,12 @@ class VectorFlowApp(tk.Tk):
                 self.connector_start_id = shape.id
                 self.selected_ids = {shape.id}
                 self.drag_mode = "connector_drag"
-                self.status_text.set("拖拽到目标图形以创建连接线")
+                self._status_hint = "拖拽到目标图形以创建连接线"
                 self.redraw()
 
         elif tool == "region_export":
-            self.status_text.set("拖拽选择导出区域")
+            self._status_hint = "拖拽选择导出区域"
+            self._update_status()
 
         elif tool == "line":
             # Snap the start point to a nearby anchor if there is one.
@@ -1129,8 +1143,8 @@ class VectorFlowApp(tk.Tk):
                 )
                 self.document.add_shape(CurveShape(points=pts, style=style))
                 self._push_history()
+                self._status_hint = f"画笔轨迹已创建（{len(pts)} 个采样点）"
                 self.redraw()
-                self.status_text.set(f"画笔轨迹已创建（{len(pts)} 个采样点）")
         elif tool == "region_export":
             self.canvas.delete("preview")
             self._do_region_export(self.drag_start, current)
@@ -1563,7 +1577,7 @@ class VectorFlowApp(tk.Tk):
         if self._freehand_points:
             self._freehand_points = []
             self.canvas.delete("preview")
-            self.status_text.set("已取消画笔绘制")
+            self._status_hint = "已取消画笔绘制"
         self.redraw()
 
     # ── Undo / Redo ─────────────────────────────────────────────────
