@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import tkinter as tk
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
@@ -28,22 +29,140 @@ ARROW_MAP = {"▶ 实心箭头": "arrow", "▷ 空心箭头": "open_arrow", "◆
 CONN_KINDS = {"━━ 直线": "straight", "┘└ 折线": "elbow", "〰 曲线": "bezier"}
 ALIGN_MAP = {"左对齐": "left", "居中": "center", "右对齐": "right"}
 
+
+@dataclass(frozen=True)
+class ToolSpec:
+    label: str
+    shortcut: str
+    hint: str
+
+
+TOOL_SPECS: dict[str, ToolSpec] = {
+    "select": ToolSpec("选择", "V", "拖拽移动选中图形，或框选多个图形"),
+    "line": ToolSpec("直线", "L", "拖拽绘制一条直线"),
+    "curve": ToolSpec("画笔", "C", "按住并拖拽绘制平滑曲线"),
+    "text": ToolSpec("文本", "T", "点击画布添加文本，双击已有文本可编辑"),
+    "connector": ToolSpec("连接", "K", "从一个图形拖拽到另一个图形以创建连接线"),
+    "region_export": ToolSpec("区域导出", "", "拖拽选择要导出的画布区域"),
+}
+
+
+REQUIRED_THEME_TOKENS: set[str] = {
+    "root_bg",
+    "panel_bg",
+    "panel_elevated",
+    "button_bg",
+    "button_hover",
+    "button_pressed",
+    "tool_selected_bg",
+    "tool_selected_fg",
+    "accent_bg",
+    "accent_hover",
+    "accent_pressed",
+    "accent_fg",
+    "danger_bg",
+    "danger_fg",
+    "fg",
+    "fg_active",
+    "caption",
+    "separator",
+    "border",
+    "field_bg",
+    "canvas_bg",
+    "grid",
+    "selection",
+    "selection_handle_fill",
+    "guide",
+    "editor_bg",
+    "editor_fg",
+    "editor_caret",
+    "editor_highlight",
+    "sash_hover",
+    "toggle_label",
+}
+
+
+def missing_theme_tokens(theme: dict[str, str]) -> list[str]:
+    return sorted(REQUIRED_THEME_TOKENS.difference(theme.keys()))
+
+
+def tool_hint(tool: str) -> str:
+    return TOOL_SPECS.get(tool, TOOL_SPECS["select"]).hint
+
+
+def tool_label(tool: str) -> str:
+    return TOOL_SPECS.get(tool, TOOL_SPECS["select"]).label
+
+
+def _selected_shapes(document: Document, selected_ids: set[str]) -> list[Shape]:
+    return [shape for shape in document.shapes if shape.id in selected_ids]
+
+
+def _is_text_capable(shape: Shape) -> bool:
+    return isinstance(shape, (FlowchartShape, TextShape))
+
+
+def inspector_context_for(document: Document, selected_ids: set[str], current_tool: str) -> str:
+    if current_tool == "curve" and not selected_ids:
+        return "pen"
+    if current_tool == "connector" and not selected_ids:
+        return "connector_tool"
+    selected = _selected_shapes(document, selected_ids)
+    if not selected:
+        return "canvas"
+    if len(selected) > 1:
+        return "multi"
+    if _is_text_capable(selected[0]):
+        return "text_shape"
+    return "shape"
+
+
+def format_status_parts(
+    *,
+    tool: str,
+    zoom: float,
+    shape_count: int,
+    selection_count: int = 0,
+    cursor: tuple[float, float] | None = None,
+    hint: str | None = None,
+    can_undo: bool = False,
+) -> list[str]:
+    parts = [
+        f"工具: {tool_label(tool)}",
+        f"选择: {selection_count if selection_count else '无'}",
+        f"缩放: {round(zoom * 100)}%",
+        f"图形: {shape_count}",
+    ]
+    if cursor is not None:
+        parts.append(f"坐标: ({round(cursor[0])}, {round(cursor[1])})")
+    if can_undo:
+        parts.append("可撤销")
+    if hint:
+        parts.append(hint)
+    return parts
+
 # 主题色板：dark 沿用 Tokyo Night Storm，light 用 GitHub Light 风格
 THEMES: dict[str, dict[str, str]] = {
     "dark": {
         "root_bg": "#16161E",
         "panel_bg": "#1F2030",
+        "panel_elevated": "#25283A",
         "button_bg": "#2A2D3F",
         "button_hover": "#3A3F58",
         "button_pressed": "#414868",
+        "tool_selected_bg": "#7AA2F7",
+        "tool_selected_fg": "#16161E",
         "accent_bg": "#7AA2F7",
         "accent_hover": "#9AB8F8",
         "accent_pressed": "#5C7BD9",
         "accent_fg": "#16161E",
+        "danger_bg": "#F7768E",
+        "danger_fg": "#16161E",
         "fg": "#C0CAF5",
         "fg_active": "#FFFFFF",
         "caption": "#565F89",
         "separator": "#414868",
+        "border": "#343853",
         "field_bg": "#2A2D3F",
         "canvas_bg": "#16161E",
         "grid": "#2A2A3E",
@@ -60,17 +179,23 @@ THEMES: dict[str, dict[str, str]] = {
     "light": {
         "root_bg": "#FFFFFF",
         "panel_bg": "#F6F8FA",
+        "panel_elevated": "#FFFFFF",
         "button_bg": "#EAEEF2",
         "button_hover": "#D6DCE2",
         "button_pressed": "#B6BFC9",
+        "tool_selected_bg": "#0969DA",
+        "tool_selected_fg": "#FFFFFF",
         "accent_bg": "#0969DA",
         "accent_hover": "#1F7AED",
         "accent_pressed": "#0851B0",
         "accent_fg": "#FFFFFF",
+        "danger_bg": "#CF222E",
+        "danger_fg": "#FFFFFF",
         "fg": "#1F2328",
         "fg_active": "#000000",
         "caption": "#656D76",
         "separator": "#D0D7DE",
+        "border": "#D0D7DE",
         "field_bg": "#FFFFFF",
         "canvas_bg": "#FCFCFD",
         "grid": "#E5E7EB",
