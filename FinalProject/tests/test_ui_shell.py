@@ -8,10 +8,12 @@ from app import (
     REQUIRED_THEME_TOKENS,
     THEMES,
     TOOL_SPECS,
+    bind_mousewheel_tree,
     flow_pick_hint,
     format_status_parts,
     inspector_context_for,
     missing_theme_tokens,
+    mousewheel_units,
     tool_hint,
     viewport_center_world,
 )
@@ -82,6 +84,47 @@ class UiShellTests(unittest.TestCase):
         self.assertIn("process", hint)
         self.assertIn("单击画布", hint)
         self.assertIn("双击图形库", hint)
+
+    def test_mousewheel_units_normalizes_windows_and_x11_events(self):
+        class Event:
+            def __init__(self, delta=0, num=None):
+                self.delta = delta
+                self.num = num
+
+        self.assertEqual(mousewheel_units(Event(delta=120)), -1)
+        self.assertEqual(mousewheel_units(Event(delta=-240)), 2)
+        self.assertEqual(mousewheel_units(Event(num=4)), -1)
+        self.assertEqual(mousewheel_units(Event(num=5)), 1)
+
+    def test_bind_mousewheel_tree_binds_existing_children(self):
+        calls = []
+
+        class Widget:
+            def __init__(self, children=None):
+                self.children = children or []
+
+            def bind(self, sequence, callback):
+                calls.append((self, sequence, callback))
+
+            def winfo_children(self):
+                return self.children
+
+        child = Widget()
+        root = Widget([child])
+
+        bind_mousewheel_tree(root, lambda _event: None)
+
+        self.assertEqual(
+            {(widget, sequence) for widget, sequence, _callback in calls},
+            {
+                (root, "<MouseWheel>"),
+                (root, "<Button-4>"),
+                (root, "<Button-5>"),
+                (child, "<MouseWheel>"),
+                (child, "<Button-4>"),
+                (child, "<Button-5>"),
+            },
+        )
 
 
 if __name__ == "__main__":

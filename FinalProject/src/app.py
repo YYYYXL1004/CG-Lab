@@ -107,6 +107,25 @@ def viewport_center_world(
     return (canvas_width / 2 - pan[0]) / zoom, (canvas_height / 2 - pan[1]) / zoom
 
 
+def mousewheel_units(event) -> int:
+    if getattr(event, "num", None) == 4:
+        return -1
+    if getattr(event, "num", None) == 5:
+        return 1
+    delta = getattr(event, "delta", 0)
+    if delta:
+        return int(-1 * (delta / 120))
+    return 0
+
+
+def bind_mousewheel_tree(widget: tk.Widget, callback) -> None:
+    widget.bind("<MouseWheel>", callback)
+    widget.bind("<Button-4>", callback)
+    widget.bind("<Button-5>", callback)
+    for child in widget.winfo_children():
+        bind_mousewheel_tree(child, callback)
+
+
 def _selected_shapes(document: Document, selected_ids: set[str]) -> list[Shape]:
     return [shape for shape in document.shapes if shape.id in selected_ids]
 
@@ -282,6 +301,7 @@ class VectorFlowApp(tk.Tk):
         self._lib_canvases: list[tk.Canvas] = []  # 侧边栏内 tk.Canvas 引用（toggle 时需 reconfigure bg）
         self._tool_buttons: dict[str, ttk.Button] = {}
         self._inspector_frame: ttk.Frame | None = None
+        self._inspector_canvas: tk.Canvas | None = None
         self._inspector_context_key: tuple[str, tuple[str, ...], str] | None = None
         self._status_hint: str | None = None
 
@@ -321,6 +341,8 @@ class VectorFlowApp(tk.Tk):
         th = self._theme()
         self._configure_style()
         self.canvas.configure(bg=th["canvas_bg"])
+        if self._inspector_canvas is not None and self._inspector_canvas.winfo_exists():
+            self._inspector_canvas.configure(bg=th["panel_bg"])
         if hasattr(self, "_sash") and self._sash.winfo_exists():
             self._sash.configure(bg=th["separator"])
         for cv in self._lib_canvases:
@@ -535,10 +557,15 @@ class VectorFlowApp(tk.Tk):
 
             # 鼠标滚轮支持
             def _on_mousewheel(e):
-                canvas_inner.yview_scroll(int(-1 * (e.delta / 120)), "units")
+                units = mousewheel_units(e)
+                if units:
+                    canvas_inner.yview_scroll(units, "units")
+                return "break"
 
             canvas_inner.bind("<MouseWheel>", _on_mousewheel)
-            inner.bind("<MouseWheel>", _on_mousewheel)
+            canvas_inner.bind("<Button-4>", _on_mousewheel)
+            canvas_inner.bind("<Button-5>", _on_mousewheel)
+            bind_mousewheel_tree(inner, _on_mousewheel)
 
         _lib_tab("流程图", [
             ("处理框", "process"), ("判断框", "decision"), ("起止框", "terminal"),
@@ -573,9 +600,38 @@ class VectorFlowApp(tk.Tk):
         self.canvas_renderer = CanvasRenderer(self.canvas)
 
     def _build_inspector(self, parent: tk.Widget) -> None:
-        self._inspector_frame = ttk.Frame(parent, style="Panel.TFrame", width=260)
-        self._inspector_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        self._inspector_frame.pack_propagate(False)
+        container = ttk.Frame(parent, style="Panel.TFrame", width=260)
+        container.pack(side=tk.RIGHT, fill=tk.Y)
+        container.pack_propagate(False)
+        canvas = tk.Canvas(container, bg=self._theme()["panel_bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        frame = ttk.Frame(canvas, style="Panel.TFrame")
+        win_id = canvas.create_window((0, 0), window=frame, anchor=tk.NW)
+
+        def _on_inner_configure(_event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(win_id, width=canvas.winfo_width())
+
+        def _on_canvas_configure(event) -> None:
+            canvas.itemconfigure(win_id, width=event.width)
+
+        def _on_mousewheel(event):
+            units = mousewheel_units(event)
+            if units:
+                canvas.yview_scroll(units, "units")
+            return "break"
+
+        frame.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Button-4>", _on_mousewheel)
+        canvas.bind("<Button-5>", _on_mousewheel)
+        bind_mousewheel_tree(frame, _on_mousewheel)
+        self._inspector_canvas = canvas
+        self._inspector_frame = frame
 
     def _build_status_bar(self) -> None:
         status = ttk.Frame(self, style="Panel.TFrame")
@@ -673,6 +729,21 @@ class VectorFlowApp(tk.Tk):
             self._build_multi_inspector(frame)
         else:
             self._build_canvas_inspector(frame)
+        self._refresh_inspector_scroll_bindings()
+
+    def _refresh_inspector_scroll_bindings(self) -> None:
+        if self._inspector_frame is None or self._inspector_canvas is None:
+            return
+
+        def _on_mousewheel(event):
+            units = mousewheel_units(event)
+            if units:
+                self._inspector_canvas.yview_scroll(units, "units")
+            return "break"
+
+        bind_mousewheel_tree(self._inspector_frame, _on_mousewheel)
+        self._inspector_frame.update_idletasks()
+        self._inspector_canvas.configure(scrollregion=self._inspector_canvas.bbox("all"))
 
     def _inspector_title(self, parent: tk.Widget, title: str, caption: str) -> None:
         ttk.Label(parent, text=title, font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=12, pady=(12, 2))
