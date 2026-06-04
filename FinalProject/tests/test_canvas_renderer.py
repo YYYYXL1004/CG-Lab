@@ -115,6 +115,57 @@ class CanvasRendererTests(unittest.TestCase):
         self.assertEqual(len(replay_calls), 2)
         self.assertTrue(all(call[0] == "create_rectangle" for call in replay_calls))
 
+    def test_selection_overlay_draws_rotation_handle_above_top_edge(self):
+        canvas = FakeCanvas()
+        document = Document()
+        shape = document.add_shape(FlowchartShape("process", 20, 30, 100, 50))
+
+        CanvasRenderer(canvas).render(
+            document,
+            zoom=1.0,
+            pan=(10, 15),
+            selected_ids={shape.id},
+            show_grid=False,
+        )
+
+        selection_calls = [
+            call for call in canvas.calls
+            if "native_selection" in call[2].get("tags", ())
+        ]
+        selection_rectangles = [call for call in selection_calls if call[0] == "create_rectangle"]
+        selection_lines = [call for call in selection_calls if call[0] == "create_line"]
+        self.assertEqual(len(selection_rectangles), 10)
+        self.assertTrue(any(call[1] == (80.0, 45.0, 80.0, 15.0) for call in selection_lines))
+        self.assertTrue(any(call[1] == (76.0, 11.0, 84.0, 19.0) for call in selection_rectangles))
+
+    def test_selected_connector_draws_endpoint_handles(self):
+        canvas = FakeCanvas()
+        document = Document()
+        start = document.add_shape(FlowchartShape("process", 20, 30, 100, 50))
+        end = document.add_shape(FlowchartShape("process", 220, 30, 100, 50))
+        connector = document.add_connector(ConnectorShape(start.id, end.id, "right", "left", kind="straight"))
+
+        CanvasRenderer(canvas).render(
+            document,
+            zoom=1.0,
+            pan=(10, 15),
+            selected_ids={connector.id},
+            show_grid=False,
+            chrome={"selection": "#00AAFF", "selection_handle_fill": "#FFFFFF"},
+        )
+
+        selection_calls = [
+            call for call in canvas.calls
+            if "native_selection" in call[2].get("tags", ())
+        ]
+        endpoint_handles = [
+            call for call in selection_calls
+            if call[0] == "create_oval"
+        ]
+        self.assertEqual(len(endpoint_handles), 2)
+        self.assertTrue(any(call[1] == (124.0, 64.0, 136.0, 76.0) for call in endpoint_handles))
+        self.assertTrue(any(call[1] == (224.0, 64.0, 236.0, 76.0) for call in endpoint_handles))
+
     def test_draft_render_keeps_shape_fill_for_native_canvas(self):
         canvas = FakeCanvas()
         document = Document()

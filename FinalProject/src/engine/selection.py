@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import math
+
+from algorithms.transform import Matrix3, Point as MatrixPoint
 from core.document import Document
 from core.shapes import CurveShape, FlowchartShape, LineShape, TextShape, shape_from_dict
 
 
 Bounds = tuple[float, float, float, float]
 Point = tuple[float, float]
+ROTATION_HANDLE_OFFSET = 30.0
 
 
 def selection_bounds(document: Document, shape_ids: list[str] | set[str]) -> Bounds | None:
@@ -30,7 +34,7 @@ def bounds_intersect(a: Bounds, b: Bounds) -> bool:
     return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
 
 
-def handle_at(bounds: Bounds | None, point: Point, tolerance: float = 7) -> str | None:
+def handle_at(bounds: Bounds | None, point: Point, tolerance: float = 7, rotation_offset: float = ROTATION_HANDLE_OFFSET) -> str | None:
     if bounds is None:
         return None
     x1, y1, x2, y2 = bounds
@@ -47,6 +51,9 @@ def handle_at(bounds: Bounds | None, point: Point, tolerance: float = 7) -> str 
         "w": (x1, cy),
     }
     px, py = point
+    rx, ry = rotation_handle_point(bounds, rotation_offset)
+    if abs(px - rx) <= tolerance and abs(py - ry) <= tolerance:
+        return "rotate"
     for name, (hx, hy) in handles.items():
         if abs(px - hx) <= tolerance and abs(py - hy) <= tolerance:
             return name
@@ -61,6 +68,22 @@ def handle_at(bounds: Bounds | None, point: Point, tolerance: float = 7) -> str 
         if abs(py - y2) <= tolerance:
             return "s"
     return None
+
+
+def rotation_handle_point(bounds: Bounds, offset: float = ROTATION_HANDLE_OFFSET) -> Point:
+    x1, y1, x2, _y2 = bounds
+    return ((x1 + x2) / 2, y1 - offset)
+
+
+def rotation_delta(bounds: Bounds | None, start: Point, current: Point) -> float:
+    if bounds is None:
+        return 0.0
+    x1, y1, x2, y2 = bounds
+    center = ((x1 + x2) / 2, (y1 + y2) / 2)
+    start_angle = math.atan2(start[1] - center[1], start[0] - center[0])
+    current_angle = math.atan2(current[1] - center[1], current[0] - center[0])
+    delta = math.degrees(current_angle - start_angle)
+    return (delta + 180) % 360 - 180
 
 
 def bounds_from_handle(original: Bounds, handle: str, current: Point, min_size: float = 12) -> Bounds:
@@ -119,6 +142,47 @@ def apply_group_resize(
             ]
         elif isinstance(shape, TextShape) and isinstance(original, TextShape):
             shape.x, shape.y = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
+
+
+def apply_group_rotation(
+    document: Document,
+    shape_ids: list[str] | set[str],
+    original_payloads: dict[str, dict],
+    original_bounds: Bounds | None,
+    angle_degrees: float,
+) -> None:
+    if original_bounds is None:
+        return
+    selected = set(shape_ids)
+    x1, y1, x2, y2 = original_bounds
+    center = MatrixPoint((x1 + x2) / 2, (y1 + y2) / 2)
+    matrix = Matrix3.rotation(math.radians(angle_degrees), center=center)
+
+    for shape in document.shapes:
+        if shape.id not in selected or shape.id not in original_payloads:
+            continue
+        original = shape_from_dict(original_payloads[shape.id])
+        if isinstance(shape, FlowchartShape) and isinstance(original, FlowchartShape):
+            new_center = matrix.apply(original.center())
+            shape.x = new_center.x - original.width / 2
+            shape.y = new_center.y - original.height / 2
+            shape.width = original.width
+            shape.height = original.height
+            shape.rotation = (original.rotation + angle_degrees) % 360
+            shape.flip_x = original.flip_x
+            shape.flip_y = original.flip_y
+        elif isinstance(shape, LineShape) and isinstance(original, LineShape):
+            p1 = matrix.apply(MatrixPoint(original.x1, original.y1))
+            p2 = matrix.apply(MatrixPoint(original.x2, original.y2))
+            shape.x1, shape.y1, shape.x2, shape.y2 = p1.x, p1.y, p2.x, p2.y
+        elif isinstance(shape, CurveShape) and isinstance(original, CurveShape):
+            shape.points = [
+                (p.x, p.y)
+                for p in (matrix.apply(MatrixPoint(x, y)) for x, y in original.points)
+            ]
+        elif isinstance(shape, TextShape) and isinstance(original, TextShape):
+            p = matrix.apply(MatrixPoint(original.x, original.y))
+            shape.x, shape.y = p.x, p.y
 
 
 def normalize_bounds(bounds: Bounds) -> Bounds:

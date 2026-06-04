@@ -316,8 +316,34 @@ class FlowchartShape:
         return {"top": (cx, y1), "bottom": (cx, y2), "left": (x1, cy), "right": (x2, cy)}
 
     def anchor(self, side: str) -> tuple[float, float]:
+        parsed = _parse_edge_anchor(side)
+        if parsed:
+            edge, ratio = parsed
+            x1, y1, x2, y2 = self.bounds()
+            ratio = max(0.0, min(1.0, ratio))
+            if edge == "top":
+                return x1 + (x2 - x1) * ratio, y1
+            if edge == "bottom":
+                return x1 + (x2 - x1) * ratio, y2
+            if edge == "left":
+                return x1, y1 + (y2 - y1) * ratio
+            if edge == "right":
+                return x2, y1 + (y2 - y1) * ratio
         a = self.anchors()
         return a.get(side, a["bottom"])
+
+    def edge_anchor_for_point(self, x: float, y: float) -> str:
+        x1, y1, x2, y2 = self.bounds()
+        width = max(1e-6, x2 - x1)
+        height = max(1e-6, y2 - y1)
+        candidates = [
+            ("top", _point_segment_distance(x, y, x1, y1, x2, y1), (x - x1) / width),
+            ("bottom", _point_segment_distance(x, y, x1, y2, x2, y2), (x - x1) / width),
+            ("left", _point_segment_distance(x, y, x1, y1, x1, y2), (y - y1) / height),
+            ("right", _point_segment_distance(x, y, x2, y1, x2, y2), (y - y1) / height),
+        ]
+        edge, _distance, ratio = min(candidates, key=lambda item: item[1])
+        return f"{edge}:{max(0.0, min(1.0, ratio)):.3f}"
 
     def to_dict(self) -> dict:
         return {
@@ -617,6 +643,18 @@ def shape_from_dict(payload: dict) -> Shape:
 def _mat_apply(matrix: "Matrix3", px: float, py: float) -> tuple[float, float]:
     transformed = matrix.apply(Point(px, py))
     return transformed.x, transformed.y
+
+
+def _parse_edge_anchor(value: str) -> tuple[str, float] | None:
+    if ":" not in value:
+        return None
+    edge, raw_ratio = value.split(":", 1)
+    if edge not in {"top", "right", "bottom", "left"}:
+        return None
+    try:
+        return edge, float(raw_ratio)
+    except ValueError:
+        return None
 
 
 def _point_segment_distance(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:

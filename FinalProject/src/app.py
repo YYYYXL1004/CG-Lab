@@ -15,7 +15,7 @@ from engine.canvas_renderer import CanvasRenderer
 from engine.command import History
 from engine.guides import compute_guides
 from engine.renderer import Renderer
-from engine.selection import apply_group_resize, bounds_from_handle, handle_at, selection_bounds, shapes_in_rect
+from engine.selection import apply_group_resize, apply_group_rotation, bounds_from_handle, handle_at, rotation_delta, selection_bounds, shapes_in_rect
 from engine.text_style import TEXT_SIZE_MAX, TEXT_SIZE_MIN, apply_text_style as apply_text_style_to_shapes, clamp_font_size
 from io_utils.serializer import load_document, save_document
 
@@ -128,6 +128,68 @@ def bind_mousewheel_tree(widget: tk.Widget, callback) -> None:
 
 def _selected_shapes(document: Document, selected_ids: set[str]) -> list[Shape]:
     return [shape for shape in document.shapes if shape.id in selected_ids]
+
+
+def _selected_connectors(document: Document, selected_ids: set[str]) -> list[ConnectorShape]:
+    return [connector for connector in document.connectors if connector.id in selected_ids]
+
+
+def connector_endpoint_hit(
+    document: Document,
+    selected_ids: set[str],
+    point: tuple[float, float],
+    tolerance: float = 7,
+) -> tuple[str, str] | None:
+    for connector in _selected_connectors(document, selected_ids):
+        endpoint = document.connector_endpoint_at(connector, point, tolerance)
+        if endpoint:
+            return connector.id, endpoint
+    return None
+
+
+def update_connector_endpoint_anchor(
+    document: Document,
+    connector_id: str,
+    endpoint: str,
+    point: tuple[float, float],
+) -> bool:
+    connector = next((item for item in document.connectors if item.id == connector_id), None)
+    if connector is None:
+        return False
+    target = nearest_flow_shape_for_connector_point(document, point)
+    if target is None:
+        return False
+    anchor = target.edge_anchor_for_point(*point)
+    if endpoint == "start":
+        connector.start_shape_id = target.id
+        connector.start_anchor = anchor
+        return True
+    if endpoint == "end":
+        connector.end_shape_id = target.id
+        connector.end_anchor = anchor
+        return True
+    return False
+
+
+def nearest_flow_shape_for_connector_point(
+    document: Document,
+    point: tuple[float, float],
+    tolerance: float = 36,
+) -> FlowchartShape | None:
+    px, py = point
+    best: tuple[float, FlowchartShape] | None = None
+    for shape in document.shapes:
+        if not isinstance(shape, FlowchartShape):
+            continue
+        x1, y1, x2, y2 = shape.bounds()
+        clamped_x = max(x1, min(x2, px))
+        clamped_y = max(y1, min(y2, py))
+        distance = math.hypot(px - clamped_x, py - clamped_y)
+        if best is None or distance < best[0]:
+            best = (distance, shape)
+    if best and best[0] <= tolerance:
+        return best[1]
+    return None
 
 
 def _is_text_capable(shape: Shape) -> bool:
@@ -271,6 +333,10 @@ class VectorFlowApp(tk.Tk):
         self.resize_handle: str | None = None
         self.resize_original_bounds: tuple[float, float, float, float] | None = None
         self.resize_original_payloads: dict[str, dict] = {}
+        self.rotate_original_bounds: tuple[float, float, float, float] | None = None
+        self.rotate_original_payloads: dict[str, dict] = {}
+        self.rotate_total_delta = 0.0
+        self.connector_endpoint_drag: tuple[str, str] | None = None
         self.connector_start_id: str | None = None
         self.status_text = tk.StringVar(value="Ready")
         self.stroke_color = tk.StringVar(value="#6080A0")
@@ -1143,13 +1209,26 @@ class VectorFlowApp(tk.Tk):
         tool = self.current_tool.get()
 
         if tool == "select":
+            endpoint_hit = connector_endpoint_hit(self.document, self.selected_ids, self.drag_start, tolerance=8 / self.zoom)
+            if endpoint_hit:
+                self.drag_mode = "connector_endpoint"
+                self.connector_endpoint_drag = endpoint_hit
+                self.redraw()
+                return
+
             selected_bounds = selection_bounds(self.document, self.selected_ids)
-            rh = handle_at(selected_bounds, self.drag_start, tolerance=8 / self.zoom)
+            rh = handle_at(selected_bounds, self.drag_start, tolerance=8 / self.zoom, rotation_offset=30 / self.zoom)
             if rh:
-                self.drag_mode = "resize"
-                self.resize_handle = rh
-                self.resize_original_bounds = selected_bounds
-                self.resize_original_payloads = {s.id: s.to_dict() for s in self.document.shapes if s.id in self.selected_ids}
+                if rh == "rotate":
+                    self.drag_mode = "rotate"
+                    self.rotate_original_bounds = selected_bounds
+                    self.rotate_original_payloads = {s.id: s.to_dict() for s in self.document.shapes if s.id in self.selected_ids}
+                    self.rotate_total_delta = 0.0
+                else:
+                    self.drag_mode = "resize"
+                    self.resize_handle = rh
+                    self.resize_original_bounds = selected_bounds
+                    self.resize_original_payloads = {s.id: s.to_dict() for s in self.document.shapes if s.id in self.selected_ids}
                 self.redraw()
                 return
             shape = self.document.shape_at(*self.drag_start)
@@ -1160,8 +1239,13 @@ class VectorFlowApp(tk.Tk):
                 self.drag_total_delta = (0.0, 0.0)
                 self.drag_mode = "move"
             else:
-                self.selected_ids.clear()
-                self.drag_mode = "box_select"
+                connector = self.document.connector_at(*self.drag_start, tolerance=8 / self.zoom)
+                if connector:
+                    self.selected_ids = {connector.id}
+                    self.drag_mode = "connector_select"
+                else:
+                    self.selected_ids.clear()
+                    self.drag_mode = "box_select"
             self.redraw()
 
         elif tool == "flow":
@@ -1214,6 +1298,20 @@ class VectorFlowApp(tk.Tk):
         elif tool == "select" and self.drag_mode == "resize" and self.resize_handle:
             new_bounds = bounds_from_handle(self.resize_original_bounds, self.resize_handle, current)
             apply_group_resize(self.document, self.selected_ids, self.resize_original_payloads, self.resize_original_bounds, new_bounds)
+            self.request_redraw(draft=True)
+        elif tool == "select" and self.drag_mode == "rotate":
+            self.rotate_total_delta = rotation_delta(self.rotate_original_bounds, self.drag_start, current)
+            apply_group_rotation(
+                self.document,
+                self.selected_ids,
+                self.rotate_original_payloads,
+                self.rotate_original_bounds,
+                self.rotate_total_delta,
+            )
+            self.request_redraw(draft=True)
+        elif tool == "select" and self.drag_mode == "connector_endpoint" and self.connector_endpoint_drag:
+            connector_id, endpoint = self.connector_endpoint_drag
+            update_connector_endpoint_anchor(self.document, connector_id, endpoint, current)
             self.request_redraw(draft=True)
         elif tool == "select" and self.drag_mode == "box_select":
             self.canvas.delete("preview")
@@ -1307,7 +1405,7 @@ class VectorFlowApp(tk.Tk):
                 x2, y2 = current
                 self.selected_ids = set(shapes_in_rect(self.document, (x1, y1, x2, y2)))
                 self.canvas.delete("preview")
-            elif self.drag_mode in {"move", "resize"}:
+            elif self.drag_mode in {"move", "resize", "rotate", "connector_endpoint"}:
                 self._push_history()
             self.redraw()
 
@@ -1318,6 +1416,10 @@ class VectorFlowApp(tk.Tk):
         self.resize_handle = None
         self.resize_original_bounds = None
         self.resize_original_payloads = {}
+        self.rotate_original_bounds = None
+        self.rotate_original_payloads = {}
+        self.rotate_total_delta = 0.0
+        self.connector_endpoint_drag = None
 
     def on_double_click(self, event) -> None:
         point = self.screen_to_world(event.x, event.y)
@@ -1741,13 +1843,16 @@ class VectorFlowApp(tk.Tk):
 
     def _do_rotate(self) -> None:
         deg = self.rotate_deg.get()
+        self._rotate_selected_by(deg)
+        if self.selected_ids:
+            self._push_history()
+            self.redraw()
+
+    def _rotate_selected_by(self, deg: float) -> None:
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
             if shape and hasattr(shape, "rotate"):
                 shape.rotate(deg)
-        if self.selected_ids:
-            self._push_history()
-            self.redraw()
 
     def _do_scale(self) -> None:
         factor = self.scale_pct.get() / 100.0

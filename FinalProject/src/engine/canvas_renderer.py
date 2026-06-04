@@ -6,6 +6,7 @@ from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
 from engine.algorithm_replay import ReplayFrame
+from engine.selection import rotation_handle_point
 
 
 CANVAS_TAG = "native_render"
@@ -285,6 +286,7 @@ class CanvasRenderer:
         color: str,
         handle_fill: str,
     ) -> None:
+        self._draw_selected_connectors(document, selected_ids, zoom, pan, color, handle_fill)
         bounds = [shape.bounds() for shape in document.shapes if shape.id in selected_ids]
         if not bounds:
             return
@@ -304,6 +306,31 @@ class CanvasRenderer:
         ]:
             r = 4
             self.canvas.create_rectangle(x - r, y - r, x + r, y + r, fill=handle_fill, outline=color, tags=tags)
+        rx, ry = self._screen(*rotation_handle_point((x1, y1, x2, y2), 30 / zoom), zoom, pan)
+        self.canvas.create_line(cx, sy1, rx, ry, fill=color, width=1, tags=tags)
+        r = 4
+        self.canvas.create_rectangle(rx - r, ry - r, rx + r, ry + r, fill=color, outline=color, tags=tags)
+
+    def _draw_selected_connectors(
+        self,
+        document: Document,
+        selected_ids: set[str],
+        zoom: float,
+        pan: tuple[float, float],
+        color: str,
+        handle_fill: str,
+    ) -> None:
+        tags = (CANVAS_TAG, SELECTION_TAG)
+        for connector in document.connectors:
+            if connector.id not in selected_ids:
+                continue
+            points = document.connector_points(connector)
+            if len(points) < 2:
+                continue
+            for wx, wy in (points[0], points[-1]):
+                sx, sy = self._screen(wx, wy, zoom, pan)
+                r = 6
+                self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=handle_fill, outline=color, width=2, tags=tags)
 
     def _draw_guides(
         self,

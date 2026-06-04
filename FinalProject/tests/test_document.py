@@ -65,6 +65,37 @@ class DocumentTests(unittest.TestCase):
         self.assertNotEqual(before[-1], after[-1])
         self.assertEqual(after[-1], (250, 50))
 
+    def test_connector_points_support_proportional_edge_anchors(self):
+        document = Document()
+        left = document.add_shape(FlowchartShape(kind="process", x=0, y=0, width=100, height=50))
+        right = document.add_shape(FlowchartShape(kind="process", x=200, y=0, width=100, height=50))
+        connector = ConnectorShape(left.id, right.id, start_anchor="right:0.25", end_anchor="left:0.75", kind="straight")
+        document.add_connector(connector)
+
+        self.assertEqual(document.connector_points(connector), [(100, 12.5), (200, 37.5)])
+
+        document.move_shapes([right.id], 50, 20)
+        self.assertEqual(document.connector_points(connector)[-1], (250, 57.5))
+
+    def test_edge_anchor_for_point_projects_to_nearest_shape_edge(self):
+        shape = FlowchartShape(kind="process", x=10, y=20, width=100, height=50)
+
+        self.assertEqual(shape.edge_anchor_for_point(35, -10), "top:0.250")
+        self.assertEqual(shape.anchor("top:0.250"), (35, 20))
+        self.assertEqual(shape.edge_anchor_for_point(250, 45), "right:0.500")
+        self.assertEqual(shape.anchor("right:0.500"), (110, 45))
+
+    def test_connector_hit_testing_finds_line_and_endpoint_handles(self):
+        document = Document()
+        left = document.add_shape(FlowchartShape(kind="process", x=0, y=0, width=100, height=50))
+        right = document.add_shape(FlowchartShape(kind="process", x=200, y=0, width=100, height=50))
+        connector = document.add_connector(ConnectorShape(left.id, right.id, "right", "left", kind="straight"))
+
+        self.assertIs(document.connector_at(150, 25), connector)
+        self.assertEqual(document.connector_endpoint_at(connector, (100, 25), tolerance=6), "start")
+        self.assertEqual(document.connector_endpoint_at(connector, (200, 25), tolerance=6), "end")
+        self.assertIsNone(document.connector_endpoint_at(connector, (150, 25), tolerance=6))
+
     def test_delete_shape_removes_attached_connectors(self):
         document = Document()
         a = FlowchartShape(kind="process", x=0, y=0, width=100, height=50)

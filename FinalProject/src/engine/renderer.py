@@ -14,6 +14,7 @@ from core.document import Document
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
 from engine.animation import animated_flow_pixels
 from engine.algorithm_replay import ReplayFrame
+from engine.selection import rotation_handle_point
 
 
 Color = tuple[int, int, int, int]
@@ -172,9 +173,16 @@ class Renderer:
         x1, y1 = self._world_to_screen((bounds[0], bounds[1]), zoom, pan)
         x2, y2 = self._world_to_screen((bounds[2], bounds[3]), zoom, pan)
         _draw_polyline(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)], color, 1, [6, 4])
-        for x, y in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]:
+        cx = (x1 + x2) / 2
+        for x, y in [
+            (x1, y1), (cx, y1), (x2, y1), (x2, (y1 + y2) / 2),
+            (x2, y2), (cx, y2), (x1, y2), (x1, (y1 + y2) / 2),
+        ]:
             _fill_polygon(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3)], handle_fill)
             _draw_polyline(pixels, [(x - 3, y - 3), (x + 3, y - 3), (x + 3, y + 3), (x - 3, y + 3), (x - 3, y - 3)], color)
+        rx, ry = self._world_to_screen(rotation_handle_point(bounds, 30 / zoom), zoom, pan)
+        _draw_line(pixels, (cx, y1), (rx, ry), color)
+        _fill_polygon(pixels, [(rx - 3, ry - 3), (rx + 3, ry - 3), (rx + 3, ry + 3), (rx - 3, ry + 3)], color)
 
     def _draw_guides(self, pixels, guides: list[tuple[str, float]], zoom: float, pan: tuple[float, float], color: str = "#FF4444") -> None:
         for kind, value in guides:
@@ -186,6 +194,7 @@ class Renderer:
                 _draw_line(pixels, (0, sy), (self.width - 1, sy), color, 1)
 
     def _draw_selection_overlay(self, pixels, document: Document, selected_ids: set[str], zoom: float, pan: tuple[float, float], color: str = "#5BA8FF", handle_fill: str = "#1E1E2E") -> None:
+        self._draw_selected_connectors(pixels, document, selected_ids, zoom, pan, color, handle_fill)
         bounds = [shape.bounds() for shape in document.shapes if shape.id in selected_ids]
         if not bounds:
             return
@@ -196,6 +205,28 @@ class Renderer:
             max(item[3] for item in bounds),
         )
         self._draw_selection(pixels, union, zoom, pan, color, handle_fill)
+
+    def _draw_selected_connectors(
+        self,
+        pixels,
+        document: Document,
+        selected_ids: set[str],
+        zoom: float,
+        pan: tuple[float, float],
+        color: str,
+        handle_fill: str,
+    ) -> None:
+        for connector in document.connectors:
+            if connector.id not in selected_ids:
+                continue
+            points = document.connector_points(connector)
+            if len(points) < 2:
+                continue
+            for point in (points[0], points[-1]):
+                sx, sy = self._world_to_screen(point, zoom, pan)
+                r = 5
+                _fill_polygon(pixels, [(sx - r, sy - r), (sx + r, sy - r), (sx + r, sy + r), (sx - r, sy + r)], handle_fill)
+                _draw_polyline(pixels, [(sx - r, sy - r), (sx + r, sy - r), (sx + r, sy + r), (sx - r, sy + r), (sx - r, sy - r)], color)
 
     def _draw_text(
         self,

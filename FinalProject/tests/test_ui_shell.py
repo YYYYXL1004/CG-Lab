@@ -9,16 +9,18 @@ from app import (
     THEMES,
     TOOL_SPECS,
     bind_mousewheel_tree,
+    connector_endpoint_hit,
     flow_pick_hint,
     format_status_parts,
     inspector_context_for,
     missing_theme_tokens,
     mousewheel_units,
     tool_hint,
+    update_connector_endpoint_anchor,
     viewport_center_world,
 )
 from core.document import Document
-from core.shapes import CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
 
 
 class UiShellTests(unittest.TestCase):
@@ -95,6 +97,26 @@ class UiShellTests(unittest.TestCase):
         self.assertEqual(mousewheel_units(Event(delta=-240)), 2)
         self.assertEqual(mousewheel_units(Event(num=4)), -1)
         self.assertEqual(mousewheel_units(Event(num=5)), 1)
+
+    def test_connector_endpoint_hit_detects_selected_connector_handle(self):
+        document = Document()
+        start = document.add_shape(FlowchartShape("process", 0, 0, 100, 50))
+        end = document.add_shape(FlowchartShape("process", 200, 0, 100, 50))
+        connector = document.add_connector(ConnectorShape(start.id, end.id, "right", "left", kind="straight"))
+
+        self.assertEqual(connector_endpoint_hit(document, {connector.id}, (100, 25), tolerance=6), (connector.id, "start"))
+        self.assertEqual(connector_endpoint_hit(document, {connector.id}, (200, 25), tolerance=6), (connector.id, "end"))
+        self.assertIsNone(connector_endpoint_hit(document, set(), (100, 25), tolerance=6))
+
+    def test_update_connector_endpoint_anchor_projects_drag_point_to_target_shape_edge(self):
+        document = Document()
+        start = document.add_shape(FlowchartShape("process", 0, 0, 100, 50))
+        end = document.add_shape(FlowchartShape("process", 200, 0, 100, 50))
+        connector = document.add_connector(ConnectorShape(start.id, end.id, "right", "left", kind="straight"))
+
+        self.assertTrue(update_connector_endpoint_anchor(document, connector.id, "end", (250, 70)))
+
+        self.assertEqual(connector.end_anchor, "bottom:0.500")
 
     def test_bind_mousewheel_tree_binds_existing_children(self):
         calls = []

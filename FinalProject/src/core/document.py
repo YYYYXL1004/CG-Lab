@@ -41,6 +41,27 @@ class Document:
                 return shape
         return None
 
+    def connector_at(self, x: float, y: float, tolerance: float = 7) -> ConnectorShape | None:
+        for connector in sorted(self.connectors, key=lambda item: item.z_order, reverse=True):
+            points = self.connector_points(connector)
+            if any(
+                _point_segment_distance(x, y, a[0], a[1], b[0], b[1]) <= tolerance
+                for a, b in zip(points, points[1:])
+            ):
+                return connector
+        return None
+
+    def connector_endpoint_at(self, connector: ConnectorShape, point: tuple[float, float], tolerance: float = 7) -> str | None:
+        points = self.connector_points(connector)
+        if len(points) < 2:
+            return None
+        px, py = point
+        if _point_distance(px, py, *points[0]) <= tolerance:
+            return "start"
+        if _point_distance(px, py, *points[-1]) <= tolerance:
+            return "end"
+        return None
+
     def move_shapes(self, shape_ids: list[str], dx: float, dy: float) -> None:
         selected = set(shape_ids)
         for shape in self.shapes:
@@ -196,6 +217,20 @@ def _dedupe(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
         if not result or result[-1] != point:
             result.append(point)
     return result
+
+
+def _point_distance(px: float, py: float, x: float, y: float) -> float:
+    return ((px - x) ** 2 + (py - y) ** 2) ** 0.5
+
+
+def _point_segment_distance(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    dx = x2 - x1
+    dy = y2 - y1
+    if dx == 0 and dy == 0:
+        return _point_distance(px, py, x1, y1)
+    t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+    t = max(0, min(1, t))
+    return _point_distance(px, py, x1 + t * dx, y1 + t * dy)
 
 
 def _bezier_route(
