@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import math
+import base64
 import tkinter as tk
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
+from PIL import Image
+
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, Shape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, Shape, TextShape
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.canvas_renderer import CanvasRenderer
@@ -197,6 +201,22 @@ def _is_text_capable(shape: Shape) -> bool:
     return isinstance(shape, (FlowchartShape, TextShape))
 
 
+def _is_raster_image(shape: Shape) -> bool:
+    return isinstance(shape, RasterImageShape)
+
+
+def bitmap_data_url_for_display(image: Image.Image, max_display: int = 520) -> tuple[str, int, int]:
+    scale = min(1.0, max_display / max(image.size))
+    display_w = max(1, round(image.width * scale))
+    display_h = max(1, round(image.height * scale))
+    if image.size != (display_w, display_h):
+        image = image.resize((display_w, display_h), Image.Resampling.LANCZOS)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    return data_url, display_w, display_h
+
+
 def inspector_context_for(document: Document, selected_ids: set[str], current_tool: str) -> str:
     if current_tool == "curve" and not selected_ids:
         return "pen"
@@ -207,6 +227,8 @@ def inspector_context_for(document: Document, selected_ids: set[str], current_to
         return "canvas"
     if len(selected) > 1:
         return "multi"
+    if _is_raster_image(selected[0]):
+        return "image_shape"
     if _is_text_capable(selected[0]):
         return "text_shape"
     return "shape"
@@ -493,6 +515,8 @@ class VectorFlowApp(tk.Tk):
         file_menu.add_command(label="保存", accelerator="Ctrl+S", command=self.save_document)
         file_menu.add_command(label="另存为...", accelerator="Ctrl+Shift+S", command=self.save_document_as)
         file_menu.add_separator()
+        file_menu.add_command(label="导入风景照片...", command=self.import_bitmap_photo)
+        file_menu.add_separator()
         file_menu.add_command(label="导出 PNG...", accelerator="Ctrl+E", command=self.export_png)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.destroy)
@@ -533,6 +557,7 @@ class VectorFlowApp(tk.Tk):
 
         ttk.Button(bar, text="新建", style="Tool.TButton", command=self.new_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="打开", style="Tool.TButton", command=self.open_document).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, text="导入照片", style="Tool.TButton", command=self.import_bitmap_photo).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="保存", style="Accent.TButton", command=self.save_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="导出 PNG", style="Tool.TButton", command=self.export_png).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
@@ -797,6 +822,8 @@ class VectorFlowApp(tk.Tk):
             self._build_connector_inspector(frame)
         elif context == "text_shape":
             self._build_shape_inspector(frame, include_text=True)
+        elif context == "image_shape":
+            self._build_image_inspector(frame)
         elif context == "shape":
             self._build_shape_inspector(frame, include_text=False)
         elif context == "multi":
@@ -904,6 +931,13 @@ class VectorFlowApp(tk.Tk):
         self._inspector_button(parent, "垂直翻转", self.flip_vertical)
         self._inspector_button(parent, "复制", self.copy_selection)
         self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
+
+    def _build_image_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "照片", "已导入的位图")
+        self._inspector_button(parent, "复制", self.copy_selection)
+        self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+        self._inspector_button(parent, "缩放", self._do_scale)
 
     def _build_multi_inspector(self, parent: tk.Widget) -> None:
         self._sync_style_vars_from_selection()
@@ -1996,6 +2030,43 @@ class VectorFlowApp(tk.Tk):
             return
         self.file_path = Path(path)
         self.save_document()
+
+    def import_bitmap_photo(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
+                ("All files", "*.*"),
+            ]
+        )
+        if not path:
+            return
+        try:
+            image = Image.open(path).convert("RGBA")
+        except Exception as exc:
+            messagebox.showerror("导入照片失败", str(exc))
+            return
+        data_url, display_w, display_h = bitmap_data_url_for_display(image)
+        wx, wy = viewport_center_world(
+            canvas_width=max(1, self.canvas.winfo_width()),
+            canvas_height=max(1, self.canvas.winfo_height()),
+            zoom=self.zoom,
+            pan=self.pan,
+        )
+        shape = self.document.add_shape(
+            RasterImageShape(
+                wx - display_w / 2,
+                wy - display_h / 2,
+                display_w,
+                display_h,
+                data_url,
+                source_name=Path(path).name,
+            )
+        )
+        self.selected_ids = {shape.id}
+        self.current_tool.set("select")
+        self._push_history()
+        self.redraw()
+        self._update_status(f"已导入照片: {Path(path).name}")
 
     def export_png(self) -> None:
         path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])

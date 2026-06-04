@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from algorithms.bezier import cubic_bezier
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, Shape, new_id, shape_from_dict
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, Shape, new_id, shape_from_dict
 
 
 @dataclass
@@ -179,6 +179,8 @@ def _new_like_id(shape: Shape) -> str:
         return new_id("line")
     if isinstance(shape, CurveShape):
         return new_id("curve")
+    if isinstance(shape, RasterImageShape):
+        return new_id("image")
     return new_id("shape")
 
 

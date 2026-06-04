@@ -4,7 +4,7 @@ import math
 
 from algorithms.transform import Matrix3, Point as MatrixPoint
 from core.document import Document
-from core.shapes import CurveShape, FlowchartShape, LineShape, TextShape, shape_from_dict
+from core.shapes import CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape, shape_from_dict
 
 
 Bounds = tuple[float, float, float, float]
@@ -142,6 +142,13 @@ def apply_group_resize(
             ]
         elif isinstance(shape, TextShape) and isinstance(original, TextShape):
             shape.x, shape.y = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
+        elif isinstance(shape, RasterImageShape) and isinstance(original, RasterImageShape):
+            left, top = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
+            right, bottom = _map_point((original.x + original.width, original.y + original.height), (ox1, oy1), (nx1, ny1), sx, sy)
+            shape.x = left
+            shape.y = top
+            shape.width = max(12, right - left)
+            shape.height = max(12, bottom - top)
 
 
 def apply_group_rotation(
@@ -183,6 +190,12 @@ def apply_group_rotation(
         elif isinstance(shape, TextShape) and isinstance(original, TextShape):
             p = matrix.apply(MatrixPoint(original.x, original.y))
             shape.x, shape.y = p.x, p.y
+        elif isinstance(shape, RasterImageShape) and isinstance(original, RasterImageShape):
+            new_center = matrix.apply(original.center())
+            shape.x = new_center.x - original.width / 2
+            shape.y = new_center.y - original.height / 2
+            shape.width = original.width
+            shape.height = original.height
 
 
 def normalize_bounds(bounds: Bounds) -> Bounds:

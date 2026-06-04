@@ -4,9 +4,14 @@ import math
 
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
+
+try:
+    from PIL import ImageTk
+except Exception:  # pragma: no cover - Tk image support is unavailable in some headless runs.
+    ImageTk = None
 
 
 CANVAS_TAG = "native_render"
@@ -27,6 +32,7 @@ CIRCUIT_KINDS = {
 class CanvasRenderer:
     def __init__(self, canvas) -> None:
         self.canvas = canvas
+        self._photo_refs: list[object] = []
 
     def render(
         self,
@@ -44,6 +50,7 @@ class CanvasRenderer:
         ch = chrome or {}
         self.canvas.configure(bg=document.background)
         self.canvas.delete(CANVAS_TAG)
+        self._photo_refs = []
         width = max(1, self.canvas.winfo_width())
         height = max(1, self.canvas.winfo_height())
         if show_grid:
@@ -122,6 +129,8 @@ class CanvasRenderer:
             )
         elif isinstance(shape, TextShape):
             self._draw_text_shape(shape, zoom, pan, tags)
+        elif isinstance(shape, RasterImageShape):
+            self._draw_raster_image_shape(shape, zoom, pan, tags)
 
     def _draw_flowchart_shape(
         self,
@@ -214,6 +223,32 @@ class CanvasRenderer:
             anchor="nw",
             tags=tags,
         )
+
+    def _draw_raster_image_shape(
+        self,
+        shape: RasterImageShape,
+        zoom: float,
+        pan: tuple[float, float],
+        tags: tuple[str, ...],
+    ) -> None:
+        sx, sy = self._screen(shape.x, shape.y, zoom, pan)
+        width = max(1, round(shape.width * zoom))
+        height = max(1, round(shape.height * zoom))
+        image = shape.resized_image(width, height)
+        if not hasattr(self.canvas, "tk"):
+            self._photo_refs.append(image)
+            self.canvas.create_image(sx, sy, image=image, anchor="nw", tags=tags)
+            return
+        if ImageTk is None:
+            x2, y2 = self._screen(shape.x + shape.width, shape.y + shape.height, zoom, pan)
+            self.canvas.create_rectangle(sx, sy, x2, y2, outline="#6080A0", tags=tags)
+            return
+        try:
+            photo = ImageTk.PhotoImage(image)
+        except Exception:
+            photo = image
+        self._photo_refs.append(photo)
+        self.canvas.create_image(sx, sy, image=photo, anchor="nw", tags=tags)
 
     def _draw_connector(
         self,

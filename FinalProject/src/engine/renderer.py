@@ -11,7 +11,7 @@ from algorithms.ellipse import midpoint_ellipse
 from algorithms.fill import scanline_fill
 from algorithms.line import bresenham_line, dashed_line
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape
 from engine.animation import animated_flow_pixels
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
@@ -129,6 +129,12 @@ class Renderer:
                            max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
         elif isinstance(shape, TextShape):
             self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
+        elif isinstance(shape, RasterImageShape):
+            target_w = max(1, round(shape.width * zoom))
+            target_h = max(1, round(shape.height * zoom))
+            bitmap = shape.resized_image(target_w, target_h)
+            sx, sy = self._world_to_screen((shape.x, shape.y), zoom, pan)
+            image.alpha_composite(bitmap, (sx, sy))
 
     def _draw_connector(
         self,

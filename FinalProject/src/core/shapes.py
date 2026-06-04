@@ -3,6 +3,10 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass, field
+from io import BytesIO
+from typing import Any
+
+from PIL import Image
 
 from algorithms.transform import Matrix3, Point
 from core.style import ShapeStyle
@@ -581,6 +585,96 @@ class TextShape:
 
 
 @dataclass
+class RasterImageShape:
+    x: float
+    y: float
+    width: float
+    height: float
+    data_url: str
+    source_name: str = ""
+    style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
+    id: str = field(default_factory=lambda: new_id("image"))
+    z_order: int = 0
+    _image_cache: Image.Image | None = field(default=None, init=False, repr=False, compare=False)
+    _resize_cache: dict[tuple[int, int], Image.Image] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def move(self, dx: float, dy: float) -> None:
+        self.x += dx
+        self.y += dy
+
+    def center(self) -> Point:
+        return Point(self.x + self.width / 2, self.y + self.height / 2)
+
+    def scale(self, factor: float) -> None:
+        center = self.center()
+        self.width = max(12, self.width * factor)
+        self.height = max(12, self.height * factor)
+        self.x = center.x - self.width / 2
+        self.y = center.y - self.height / 2
+
+    def rotate(self, angle_degrees: float) -> None:
+        return None
+
+    def flip_horizontal(self) -> None:
+        return None
+
+    def flip_vertical(self) -> None:
+        return None
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        return self.x, self.y, self.x + self.width, self.y + self.height
+
+    def outline_points(self) -> list[tuple[float, float]]:
+        x1, y1, x2, y2 = self.bounds()
+        return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+    def hit_test(self, x: float, y: float) -> bool:
+        x1, y1, x2, y2 = self.bounds()
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+    def image(self) -> Image.Image:
+        if self._image_cache is None:
+            self._image_cache = Image.open(BytesIO(_decode_data_url(self.data_url))).convert("RGBA")
+        return self._image_cache
+
+    def resized_image(self, width: int, height: int, *, resample: Any = Image.Resampling.LANCZOS) -> Image.Image:
+        size = (max(1, int(width)), max(1, int(height)))
+        cached = self._resize_cache.get(size)
+        if cached is None:
+            cached = self.image().resize(size, resample)
+            self._resize_cache[size] = cached
+        return cached
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": "raster_image",
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "data_url": self.data_url,
+            "source_name": self.source_name,
+            "style": self.style.to_dict(),
+            "z_order": self.z_order,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "RasterImageShape":
+        return cls(
+            x=float(payload["x"]),
+            y=float(payload["y"]),
+            width=float(payload["width"]),
+            height=float(payload["height"]),
+            data_url=str(payload["data_url"]),
+            source_name=str(payload.get("source_name", "")),
+            style=ShapeStyle.from_dict(payload.get("style")),
+            id=payload.get("id", new_id("image")),
+            z_order=int(payload.get("z_order", 0)),
+        )
+
+
+@dataclass
 class ConnectorShape:
     start_shape_id: str
     end_shape_id: str
@@ -624,7 +718,7 @@ class ConnectorShape:
         )
 
 
-Shape = FlowchartShape | LineShape | CurveShape | TextShape
+Shape = FlowchartShape | LineShape | CurveShape | TextShape | RasterImageShape
 
 
 def shape_from_dict(payload: dict) -> Shape:
@@ -637,7 +731,18 @@ def shape_from_dict(payload: dict) -> Shape:
         return CurveShape.from_dict(payload)
     if shape_type == "text":
         return TextShape.from_dict(payload)
+    if shape_type == "raster_image":
+        return RasterImageShape.from_dict(payload)
     raise ValueError(f"Unsupported shape type: {shape_type!r}")
+
+
+def _decode_data_url(data_url: str) -> bytes:
+    import base64
+
+    marker = ";base64,"
+    if marker in data_url:
+        return base64.b64decode(data_url.split(marker, 1)[1])
+    return base64.b64decode(data_url)
 
 
 def _mat_apply(matrix: "Matrix3", px: float, py: float) -> tuple[float, float]:
