@@ -11,7 +11,7 @@ from algorithms.ellipse import midpoint_ellipse
 from algorithms.fill import scanline_fill
 from algorithms.line import bresenham_line, dashed_line
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
 from engine.animation import animated_flow_pixels
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
@@ -113,6 +113,12 @@ class Renderer:
                     x1, y1, x2, y2 = text_bounds
                     text_bounds = (x1, (y1 + y2) / 2, x2, y2)
                 self._draw_text(image, shape.text, text_bounds, shape.style, zoom, pan)
+        elif isinstance(shape, GroupShape):
+            nested = Document(shapes=list(shape.children), connectors=list(shape.connectors), background="#00000000")
+            for child in sorted(shape.children, key=lambda item: item.z_order):
+                self._draw_shape(image, pixels, child, zoom, pan, draft=draft)
+            for connector in shape.connectors:
+                self._draw_connector(pixels, nested, connector, zoom, pan)
         elif isinstance(shape, LineShape):
             _draw_line(
                 pixels,

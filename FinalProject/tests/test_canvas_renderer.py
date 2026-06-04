@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, TextShape
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame
 from engine.canvas_renderer import CanvasRenderer
@@ -189,6 +189,21 @@ class CanvasRendererTests(unittest.TestCase):
 
         rectangle_calls = [call for call in canvas.calls if call[0] == "create_rectangle"]
         self.assertEqual(rectangle_calls[0][2]["fill"], "#AA3344")
+
+    def test_group_shape_renders_children_and_internal_connectors(self):
+        canvas = FakeCanvas()
+        document = Document()
+        a = FlowchartShape("process", 20, 30, 80, 40, "A")
+        b = FlowchartShape("process", 140, 30, 80, 40, "B")
+        group = GroupShape("Pair", [a, b], [ConnectorShape(a.id, b.id, "right", "left", kind="straight")])
+        document.add_shape(group)
+
+        CanvasRenderer(canvas).render(document, show_grid=False)
+
+        rendered_tags = [call[2].get("tags", ()) for call in canvas.calls]
+        self.assertTrue(any("shape:" + group.id in tags for tags in rendered_tags))
+        self.assertGreaterEqual([call[0] for call in canvas.calls].count("create_polygon"), 2)
+        self.assertTrue(any(call[0] == "create_line" and "native_connector" in call[2].get("tags", ()) for call in canvas.calls))
 
 
 if __name__ == "__main__":

@@ -11,9 +11,10 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from PIL import Image
 
 from algorithms.bezier import catmull_rom_polyline
+from core.components import ComponentLibrary, build_group_from_selection
 from core.document import Document
 from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, Shape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.canvas_renderer import CanvasRenderer
@@ -124,6 +125,10 @@ def mousewheel_units(event) -> int:
     return 0
 
 
+def clamp_drag_width(base_width: int, delta: int, min_width: int, max_width: int) -> int:
+    return max(min_width, min(max_width, base_width + delta))
+
+
 def bind_mousewheel_tree(widget: tk.Widget, callback) -> None:
     widget.bind("<MouseWheel>", callback)
     widget.bind("<Button-4>", callback)
@@ -206,6 +211,10 @@ def _is_raster_image(shape: Shape) -> bool:
     return isinstance(shape, RasterImageShape)
 
 
+def _is_group_shape(shape: Shape) -> bool:
+    return isinstance(shape, GroupShape)
+
+
 def bitmap_data_url_for_display(image: Image.Image, max_display: int = 520) -> tuple[str, int, int]:
     scale = min(1.0, max_display / max(image.size))
     display_w = max(1, round(image.width * scale))
@@ -218,6 +227,24 @@ def bitmap_data_url_for_display(image: Image.Image, max_display: int = 520) -> t
     return data_url, display_w, display_h
 
 
+def _parse_metadata_text(text: str) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+        elif ":" in line:
+            key, value = line.split(":", 1)
+        else:
+            key, value = line, ""
+        key = key.strip()
+        if key:
+            metadata[key] = value.strip()
+    return metadata
+
+
 def inspector_context_for(document: Document, selected_ids: set[str], current_tool: str) -> str:
     if current_tool == "curve" and not selected_ids:
         return "pen"
@@ -228,6 +255,8 @@ def inspector_context_for(document: Document, selected_ids: set[str], current_to
         return "canvas"
     if len(selected) > 1:
         return "multi"
+    if _is_group_shape(selected[0]):
+        return "group_shape"
     if _is_raster_image(selected[0]):
         return "image_shape"
     if _is_text_capable(selected[0]):
@@ -394,6 +423,8 @@ class VectorFlowApp(tk.Tk):
         self._inspector_canvas: tk.Canvas | None = None
         self._inspector_context_key: tuple[str, tuple[str, ...], str] | None = None
         self._status_hint: str | None = None
+        self.component_library = ComponentLibrary(Path("assets/components/my_components.json"))
+        self._component_inner: ttk.Frame | None = None
 
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
@@ -436,11 +467,15 @@ class VectorFlowApp(tk.Tk):
         self.theme_name = "light" if self.theme_name == "dark" else "dark"
         th = self._theme()
         self._configure_style()
+        if hasattr(self, "_command_canvas") and self._command_canvas.winfo_exists():
+            self._command_canvas.configure(bg=th["panel_bg"])
         self.canvas.configure(bg=th["canvas_bg"])
         if self._inspector_canvas is not None and self._inspector_canvas.winfo_exists():
             self._inspector_canvas.configure(bg=th["panel_bg"])
         if hasattr(self, "_sash") and self._sash.winfo_exists():
             self._sash.configure(bg=th["separator"])
+        if hasattr(self, "_tool_sash") and self._tool_sash.winfo_exists():
+            self._tool_sash.configure(bg=th["separator"])
         for cv in self._lib_canvases:
             try:
                 cv.configure(bg=th["panel_bg"])
@@ -554,8 +589,36 @@ class VectorFlowApp(tk.Tk):
         self._rebuild_inspector()
 
     def _build_command_bar(self) -> None:
-        bar = ttk.Frame(self, style="Panel.TFrame")
-        bar.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 3))
+        shell = ttk.Frame(self, style="Panel.TFrame")
+        shell.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 3))
+        canvas = tk.Canvas(shell, height=42, bg=self._theme()["panel_bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(shell, orient=tk.HORIZONTAL, command=canvas.xview)
+        canvas.configure(xscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.TOP, fill=tk.X, expand=True)
+        scrollbar.pack(side=tk.TOP, fill=tk.X)
+        self._command_canvas = canvas
+
+        bar = ttk.Frame(canvas, style="Panel.TFrame")
+        win_id = canvas.create_window((0, 0), window=bar, anchor=tk.NW)
+
+        def _on_bar_configure(_event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            requested = max(bar.winfo_reqwidth(), event.width)
+            canvas.itemconfigure(win_id, width=requested)
+
+        def _on_mousewheel(event):
+            units = mousewheel_units(event)
+            if units:
+                canvas.xview_scroll(units, "units")
+            return "break"
+
+        bar.bind("<Configure>", _on_bar_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Button-4>", _on_mousewheel)
+        canvas.bind("<Button-5>", _on_mousewheel)
 
         ttk.Button(bar, text="新建", style="Tool.TButton", command=self.new_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="打开", style="Tool.TButton", command=self.open_document).pack(side=tk.LEFT, padx=2, pady=4)
@@ -580,6 +643,8 @@ class VectorFlowApp(tk.Tk):
                         command=self._on_connector_animation_toggle).pack(side=tk.LEFT, padx=6, pady=4)
         ttk.Button(bar, text="100%", style="Tool.TButton", command=self.reset_view).pack(side=tk.LEFT, padx=2, pady=4)
 
+        bind_mousewheel_tree(bar, _on_mousewheel)
+
     def _build_left_panel(self, parent: tk.Widget) -> None:
         self._build_tool_rail(parent)
         self._sidebar_width = 180
@@ -598,8 +663,7 @@ class VectorFlowApp(tk.Tk):
 
         def _sash_drag(event):
             delta = event.x_root - sash._drag_x
-            new_w = max(120, min(400, sash._drag_w + delta))
-            lib_container.configure(width=new_w)
+            lib_container.configure(width=clamp_drag_width(sash._drag_w, delta, 120, 400))
 
         sash.bind("<ButtonPress-1>", _sash_press)
         sash.bind("<B1-Motion>", _sash_drag)
@@ -609,7 +673,8 @@ class VectorFlowApp(tk.Tk):
         self._build_shape_library(lib_container)
 
     def _build_tool_rail(self, parent: tk.Widget) -> None:
-        rail = ttk.Frame(parent, style="Panel.TFrame", width=76)
+        self._tool_rail_width = 76
+        rail = ttk.Frame(parent, style="Panel.TFrame", width=self._tool_rail_width)
         rail.pack(side=tk.LEFT, fill=tk.Y)
         rail.pack_propagate(False)
         for tool, spec in TOOL_SPECS.items():
@@ -620,6 +685,24 @@ class VectorFlowApp(tk.Tk):
             self._tool_buttons[tool] = button
             if tool == "curve":
                 self.curve_btn = button
+
+        th = self._theme()
+        sash = tk.Frame(parent, width=5, bg=th["separator"], cursor="sb_h_double_arrow")
+        sash.pack(side=tk.LEFT, fill=tk.Y)
+        self._tool_sash = sash
+
+        def _sash_press(event):
+            sash._drag_x = event.x_root
+            sash._drag_w = rail.winfo_width()
+
+        def _sash_drag(event):
+            delta = event.x_root - sash._drag_x
+            rail.configure(width=clamp_drag_width(sash._drag_w, delta, 72, 180))
+
+        sash.bind("<ButtonPress-1>", _sash_press)
+        sash.bind("<B1-Motion>", _sash_drag)
+        sash.bind("<Enter>", lambda _e: sash.configure(bg=self._theme()["sash_hover"]))
+        sash.bind("<Leave>", lambda _e: sash.configure(bg=self._theme()["separator"]))
 
     def _build_shape_library(self, lib_container: tk.Widget) -> None:
         self.library = ttk.Notebook(lib_container)
@@ -685,6 +768,60 @@ class VectorFlowApp(tk.Tk):
             ("电感", "inductor"), ("电压源", "voltage_source"),
         ], extras=[("📋 加载默认电路", self.load_circuit_template)])
 
+        self._build_component_library_tab()
+
+    def _build_component_library_tab(self) -> None:
+        frame = ttk.Frame(self.library)
+        self.library.add(frame, text="我的组件")
+        canvas_inner = tk.Canvas(frame, bg=self._theme()["panel_bg"], highlightthickness=0)
+        self._lib_canvases.append(canvas_inner)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_inner.yview)
+        canvas_inner.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas_inner)
+        self._component_inner = inner
+        win_id = canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
+
+        def _on_inner_configure(_event):
+            canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
+            canvas_inner.itemconfigure(win_id, width=canvas_inner.winfo_width())
+
+        def _on_canvas_configure(event):
+            canvas_inner.itemconfigure(win_id, width=event.width)
+
+        def _on_mousewheel(event):
+            units = mousewheel_units(event)
+            if units:
+                canvas_inner.yview_scroll(units, "units")
+            return "break"
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas_inner.bind("<Configure>", _on_canvas_configure)
+        canvas_inner.bind("<MouseWheel>", _on_mousewheel)
+        canvas_inner.bind("<Button-4>", _on_mousewheel)
+        canvas_inner.bind("<Button-5>", _on_mousewheel)
+        bind_mousewheel_tree(inner, _on_mousewheel)
+        self._refresh_component_library_tab()
+
+    def _refresh_component_library_tab(self) -> None:
+        inner = self._component_inner
+        if inner is None or not inner.winfo_exists():
+            return
+        for child in inner.winfo_children():
+            child.destroy()
+        ttk.Button(inner, text="保存当前选择", style="Accent.TButton", command=self.save_selection_to_component_library).pack(fill=tk.X, padx=4, pady=(4, 6))
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=4, pady=2)
+        if not self.component_library.templates:
+            ttk.Label(inner, text="暂无自定义组件", style="Group.TLabel").pack(anchor=tk.W, padx=8, pady=8)
+            return
+        for index, template in enumerate(self.component_library.templates):
+            row = ttk.Frame(inner, style="Panel.TFrame")
+            row.pack(fill=tk.X, padx=4, pady=2)
+            btn = ttk.Button(row, text=template.name, command=lambda i=index: self.place_component_template_at_view_center(i))
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Button(row, text="删除", style="Danger.TButton", command=lambda i=index: self.delete_component_template(i)).pack(side=tk.RIGHT, padx=(4, 0))
+
     def _build_workspace(self, parent: tk.Widget) -> None:
         canvas_frame = ttk.Frame(parent, style="App.TFrame")
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -695,6 +832,7 @@ class VectorFlowApp(tk.Tk):
         self.canvas.bind("<B1-Motion>", self.on_left_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_up)
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
+        self.canvas.bind("<ButtonPress-3>", self.on_right_click)
         self.canvas.bind("<ButtonPress-2>", self.on_pan_start)
         self.canvas.bind("<B2-Motion>", self.on_pan_drag)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
@@ -825,6 +963,8 @@ class VectorFlowApp(tk.Tk):
             self._build_connector_inspector(frame)
         elif context == "text_shape":
             self._build_shape_inspector(frame, include_text=True)
+        elif context == "group_shape":
+            self._build_group_inspector(frame)
         elif context == "image_shape":
             self._build_image_inspector(frame)
         elif context == "shape":
@@ -942,6 +1082,22 @@ class VectorFlowApp(tk.Tk):
         ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
         self._inspector_button(parent, "缩放", self._do_scale)
 
+    def _build_group_inspector(self, parent: tk.Widget) -> None:
+        group = self._selected_group()
+        self._inspector_title(parent, "组件", group.name if group else "自定义组件")
+        self._inspector_button(parent, "保存到我的组件库", self.save_selection_to_component_library, "Accent.TButton")
+        self._inspector_button(parent, "编辑 Metadata", self.open_metadata_dialog)
+        if group is not None:
+            ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+            if group.metadata:
+                for key, value in group.metadata.items():
+                    ttk.Label(parent, text=f"{key}: {value}", wraplength=220).pack(anchor=tk.W, padx=12, pady=2)
+            else:
+                ttk.Label(parent, text="暂无 Metadata", style="Group.TLabel").pack(anchor=tk.W, padx=12, pady=2)
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+        self._inspector_button(parent, "复制", self.copy_selection)
+        self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
+
     def _build_multi_inspector(self, parent: tk.Widget) -> None:
         self._sync_style_vars_from_selection()
         self._inspector_title(parent, "多选", f"已选择 {len(self.selected_ids)} 个图形")
@@ -984,6 +1140,81 @@ class VectorFlowApp(tk.Tk):
         self.place_flow_shape(wx, wy)
         self._push_history()
         self.set_tool("select")
+
+    def place_component_template_at_view_center(self, index: int) -> None:
+        if index < 0 or index >= len(self.component_library.templates):
+            return
+        wx, wy = viewport_center_world(
+            canvas_width=max(1, self.canvas.winfo_width()),
+            canvas_height=max(1, self.canvas.winfo_height()),
+            zoom=self.zoom,
+            pan=self.pan,
+        )
+        group = self.component_library.templates[index].instantiate_at(wx, wy)
+        self.document.add_shape(group)
+        self.selected_ids = {group.id}
+        self._push_history()
+        self.set_tool("select")
+        self.redraw()
+
+    def delete_component_template(self, index: int) -> None:
+        if index < 0 or index >= len(self.component_library.templates):
+            return
+        template = self.component_library.templates[index]
+        if not messagebox.askyesno("删除组件", f"确定删除组件“{template.name}”吗？"):
+            return
+        if self.component_library.delete(index):
+            self.component_library.load()
+            self._refresh_component_library_tab()
+            self._update_status(f"已删除组件：{template.name}")
+
+    def save_selection_to_component_library(self) -> None:
+        if not self.selected_ids:
+            self._update_status("请先选择要保存的图形")
+            return
+        group = self._selected_group()
+        if group is None:
+            name = self._ask_text("保存到我的组件库", "组件名称", "自定义组件")
+            if not name:
+                return
+            group = build_group_from_selection(self.document, self.selected_ids, name=name)
+            self.document.replace_selection_with_group(self.selected_ids, group)
+            self.selected_ids = {group.id}
+            self._push_history()
+            self.redraw()
+        self.component_library.add_from_group(group)
+        self.component_library.load()
+        self._refresh_component_library_tab()
+        self._update_status(f"已保存组件：{group.name}")
+
+    def _selected_group(self) -> GroupShape | None:
+        if len(self.selected_ids) != 1:
+            return None
+        shape = self.document.find_shape(next(iter(self.selected_ids)))
+        return shape if isinstance(shape, GroupShape) else None
+
+    def _ask_text(self, title: str, label: str, initial: str = "") -> str | None:
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        value = tk.StringVar(value=initial)
+        ttk.Label(dlg, text=label).grid(row=0, column=0, sticky=tk.W, padx=12, pady=(12, 4))
+        entry = ttk.Entry(dlg, textvariable=value, width=32)
+        entry.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=12, pady=4)
+        result: dict[str, str | None] = {"value": None}
+
+        def ok() -> None:
+            text = value.get().strip()
+            result["value"] = text or None
+            dlg.destroy()
+
+        ttk.Button(dlg, text="确定", style="Accent.TButton", command=ok).grid(row=2, column=0, padx=12, pady=12)
+        ttk.Button(dlg, text="取消", style="Tool.TButton", command=dlg.destroy).grid(row=2, column=1, padx=12, pady=12)
+        entry.focus_set()
+        self.wait_window(dlg)
+        return result["value"]
 
     # ── Pen panel (curve tool's floating property popup) ────────────
 
@@ -1534,11 +1765,35 @@ class VectorFlowApp(tk.Tk):
         self.rotate_total_delta = 0.0
         self.connector_endpoint_drag = None
 
+    def on_right_click(self, event) -> None:
+        if self.physics_running:
+            return
+        point = self.screen_to_world(event.x, event.y)
+        shape = self.document.shape_at(*point)
+        if shape is not None and shape.id not in self.selected_ids:
+            self.selected_ids = {shape.id}
+            self.redraw()
+        menu = tk.Menu(self, tearoff=False)
+        menu.add_command(label="保存到我的组件库", command=self.save_selection_to_component_library, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
+        if isinstance(shape, GroupShape) or self._selected_group() is not None:
+            menu.add_command(label="编辑 Metadata", command=self.open_metadata_dialog)
+        menu.add_separator()
+        menu.add_command(label="复制", command=self.copy_selection, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
+        menu.add_command(label="删除", command=self.delete_selection, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def on_double_click(self, event) -> None:
         if self.physics_running:
             return
         point = self.screen_to_world(event.x, event.y)
         shape = self.document.shape_at(*point)
+        if isinstance(shape, GroupShape):
+            self.selected_ids = {shape.id}
+            self.open_metadata_dialog()
+            return
         if isinstance(shape, (FlowchartShape, TextShape)):
             self._open_inline_editor_for_shape(shape)
 
@@ -1765,6 +2020,43 @@ class VectorFlowApp(tk.Tk):
         editor.bind("<Escape>", lambda _e: self._cancel_inline_editor())
         self._inline_editor = editor
         self.canvas.create_window(sx, sy, window=editor, anchor=tk.NW, tags="inline_editor")
+        editor.focus_set()
+
+    def open_metadata_dialog(self) -> None:
+        group = self._selected_group()
+        if group is None:
+            self._update_status("请先选择一个组件")
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title("Metadata")
+        dlg.geometry("420x320")
+        dlg.transient(self)
+        dlg.grab_set()
+        th = self._theme()
+        editor = tk.Text(
+            dlg,
+            wrap=tk.WORD,
+            bg=th["editor_bg"],
+            fg=th["editor_fg"],
+            insertbackground=th["editor_caret"],
+            font=("Consolas", 11),
+            relief=tk.SOLID,
+            bd=1,
+        )
+        editor.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 6))
+        editor.insert("1.0", "\n".join(f"{key}={value}" for key, value in group.metadata.items()))
+        actions = ttk.Frame(dlg)
+        actions.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        def save() -> None:
+            group.metadata = _parse_metadata_text(editor.get("1.0", tk.END))
+            self._push_history()
+            self.redraw()
+            self._rebuild_inspector(force=True)
+            dlg.destroy()
+
+        ttk.Button(actions, text="保存", style="Accent.TButton", command=save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(actions, text="取消", style="Tool.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
         editor.focus_set()
 
     def _commit_inline_editor(self) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from core.document import Document
-from core.shapes import ConnectorShape, FlowchartShape, LineShape
+from core.shapes import ConnectorShape, FlowchartShape, GroupShape, LineShape
 from core.style import ShapeStyle
 from engine.command import History
 from engine.algorithm_replay import ReplayFrame
@@ -32,6 +32,20 @@ class RendererCommandTests(unittest.TestCase):
         image = Renderer(260, 130).render(document)
 
         self.assertEqual(image.getpixel((20, 60)), (170, 51, 68, 255))
+
+    def test_renderer_draws_group_shape_children(self):
+        document = Document(background="#000000")
+        document.add_shape(
+            GroupShape(
+                "Pair",
+                [FlowchartShape("process", 10, 10, 60, 30, "A", ShapeStyle(fill="#AA3344"))],
+                [],
+            )
+        )
+
+        image = Renderer(100, 70).render(document, show_grid=False)
+
+        self.assertEqual(image.getpixel((20, 20)), (170, 51, 68, 255))
 
     def test_renderer_overlays_animated_connector_pixels(self):
         document = Document()

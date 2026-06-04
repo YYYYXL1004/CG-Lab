@@ -9,6 +9,7 @@ from app import (
     THEMES,
     TOOL_SPECS,
     bind_mousewheel_tree,
+    clamp_drag_width,
     connector_endpoint_hit,
     flow_pick_hint,
     format_status_parts,
@@ -97,6 +98,11 @@ class UiShellTests(unittest.TestCase):
         self.assertEqual(mousewheel_units(Event(delta=-240)), 2)
         self.assertEqual(mousewheel_units(Event(num=4)), -1)
         self.assertEqual(mousewheel_units(Event(num=5)), 1)
+
+    def test_clamp_drag_width_applies_delta_and_bounds(self):
+        self.assertEqual(clamp_drag_width(76, 24, 72, 180), 100)
+        self.assertEqual(clamp_drag_width(76, -40, 72, 180), 72)
+        self.assertEqual(clamp_drag_width(160, 80, 72, 180), 180)
 
     def test_connector_endpoint_hit_detects_selected_connector_handle(self):
         document = Document()

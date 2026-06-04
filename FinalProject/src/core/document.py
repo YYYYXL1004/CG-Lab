@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from algorithms.bezier import cubic_bezier
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, Shape, new_id, shape_from_dict
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, new_id, shape_from_dict
 
 
 @dataclass
@@ -79,6 +79,24 @@ class Document:
             and connector.end_shape_id not in selected
         ]
         self._rebuild_shape_index()
+
+    def replace_selection_with_group(self, shape_ids: set[str] | list[str], group: GroupShape) -> GroupShape:
+        selected = set(shape_ids)
+        insert_at = min(
+            (index for index, shape in enumerate(self.shapes) if shape.id in selected),
+            default=len(self.shapes),
+        )
+        self.shapes = [shape for shape in self.shapes if shape.id not in selected]
+        self.connectors = [
+            connector
+            for connector in self.connectors
+            if connector.start_shape_id not in selected and connector.end_shape_id not in selected
+        ]
+        self.shapes.insert(insert_at, group)
+        for index, shape in enumerate(self.shapes):
+            shape.z_order = index
+        self._rebuild_shape_index()
+        return group
 
     def copy_paste(self, shape_ids: list[str], offset: tuple[float, float] = (28, 28)) -> list[Shape]:
         selected = set(shape_ids)
@@ -179,8 +197,10 @@ def _new_like_id(shape: Shape) -> str:
         return new_id("line")
     if isinstance(shape, CurveShape):
         return new_id("curve")
-    if isinstance(shape, RasterImageShape):
-        return new_id("image")
+        if isinstance(shape, RasterImageShape):
+            return new_id("image")
+    if isinstance(shape, GroupShape):
+        return new_id("group")
     return new_id("shape")
 
 

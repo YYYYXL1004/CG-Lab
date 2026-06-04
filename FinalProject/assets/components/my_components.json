@@ -1,0 +1,194 @@
+{
+  "version": "1.0",
+  "templates": [
+    {
+      "name": "三圆",
+      "children": [
+        {
+          "id": "shape_750299be9e",
+          "type": "flowchart",
+          "kind": "circle",
+          "x": 341.0,
+          "y": 291.0,
+          "width": 100.0,
+          "height": 100.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 3,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        },
+        {
+          "id": "shape_cd590530a7",
+          "type": "flowchart",
+          "kind": "circle",
+          "x": 291.0,
+          "y": 377.0,
+          "width": 100.0,
+          "height": 100.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 4,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        },
+        {
+          "id": "shape_d8fdec0dcc",
+          "type": "flowchart",
+          "kind": "circle",
+          "x": 391.0,
+          "y": 377.0,
+          "width": 100.0,
+          "height": 100.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 5,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        }
+      ],
+      "connectors": [],
+      "metadata": {}
+    },
+    {
+      "name": "4",
+      "children": [
+        {
+          "id": "shape_dfff7f6722",
+          "type": "flowchart",
+          "kind": "ellipse",
+          "x": 308.0,
+          "y": 335.0,
+          "width": 140.0,
+          "height": 90.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 3,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        },
+        {
+          "id": "shape_8f6150e676",
+          "type": "flowchart",
+          "kind": "circle",
+          "x": 278.0,
+          "y": 425.0,
+          "width": 100.0,
+          "height": 100.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 4,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        },
+        {
+          "id": "shape_6a54f20415",
+          "type": "flowchart",
+          "kind": "circle",
+          "x": 378.0,
+          "y": 425.0,
+          "width": 100.0,
+          "height": 100.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 5,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        },
+        {
+          "id": "shape_82f92b490f",
+          "type": "flowchart",
+          "kind": "trapezoid",
+          "x": 308.0,
+          "y": 525.0,
+          "width": 140.0,
+          "height": 90.0,
+          "text": "",
+          "style": {
+            "stroke": "#6080A0",
+            "fill": "#283850",
+            "stroke_width": 2,
+            "dash": [],
+            "font_size": 14,
+            "text_color": "#D0D0E0",
+            "text_align": "center",
+            "bold": false,
+            "smoothness": 3
+          },
+          "z_order": 6,
+          "rotation": 0.0,
+          "flip_x": false,
+          "flip_y": false
+        }
+      ],
+      "connectors": [],
+      "metadata": {}
+    }
+  ]
+}

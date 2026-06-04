@@ -4,7 +4,7 @@ import math
 
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
 
@@ -106,6 +106,8 @@ class CanvasRenderer:
         tags = (CANVAS_TAG, SHAPE_TAG, f"shape:{shape.id}")
         if isinstance(shape, FlowchartShape):
             self._draw_flowchart_shape(shape, zoom, pan, tags, draft)
+        elif isinstance(shape, GroupShape):
+            self._draw_group_shape(shape, zoom, pan, tags, draft)
         elif isinstance(shape, LineShape):
             self.canvas.create_line(
                 *self._screen(shape.x1, shape.y1, zoom, pan),
@@ -131,6 +133,51 @@ class CanvasRenderer:
             self._draw_text_shape(shape, zoom, pan, tags)
         elif isinstance(shape, RasterImageShape):
             self._draw_raster_image_shape(shape, zoom, pan, tags)
+
+    def _draw_group_shape(self, shape: GroupShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...], draft: bool) -> None:
+        document = Document(shapes=list(shape.children), connectors=list(shape.connectors))
+        for connector in shape.connectors:
+            points = document.connector_points(connector)
+            if len(points) < 2:
+                continue
+            self.canvas.create_line(
+                *self._flat(points, zoom, pan),
+                fill=connector.style.stroke,
+                width=self._stroke_width(connector.style.stroke_width, zoom),
+                dash=self._dash(connector.style.dash),
+                smooth=connector.kind == "bezier",
+                tags=tags + (CONNECTOR_TAG,),
+                **self._arrow_options(connector),
+            )
+        for child in sorted(shape.children, key=lambda item: item.z_order):
+            child_tags = tags + (f"group_child:{child.id}",)
+            if isinstance(child, FlowchartShape):
+                self._draw_flowchart_shape(child, zoom, pan, child_tags, draft)
+            elif isinstance(child, LineShape):
+                self.canvas.create_line(
+                    *self._screen(child.x1, child.y1, zoom, pan),
+                    *self._screen(child.x2, child.y2, zoom, pan),
+                    fill=child.style.stroke,
+                    width=self._stroke_width(child.style.stroke_width, zoom),
+                    dash=self._dash(child.style.dash),
+                    tags=child_tags,
+                )
+            elif isinstance(child, CurveShape):
+                if len(child.points) < 2:
+                    continue
+                points = catmull_rom_polyline(child.points, steps_per_segment=10)
+                self.canvas.create_line(
+                    *self._flat(points, zoom, pan),
+                    fill=child.style.stroke,
+                    width=self._stroke_width(child.style.stroke_width, zoom),
+                    dash=self._dash(child.style.dash),
+                    smooth=True,
+                    tags=child_tags,
+                )
+            elif isinstance(child, TextShape):
+                self._draw_text_shape(child, zoom, pan, child_tags)
+            elif isinstance(child, RasterImageShape):
+                self._draw_raster_image_shape(child, zoom, pan, child_tags)
 
     def _draw_flowchart_shape(
         self,

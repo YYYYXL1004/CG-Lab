@@ -675,6 +675,99 @@ class RasterImageShape:
 
 
 @dataclass
+class GroupShape:
+    name: str
+    children: list["Shape"]
+    connectors: list["ConnectorShape"] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: new_id("group"))
+    z_order: int = 0
+
+    def move(self, dx: float, dy: float) -> None:
+        for child in self.children:
+            child.move(dx, dy)
+
+    def center(self) -> Point:
+        x1, y1, x2, y2 = self.bounds()
+        return Point((x1 + x2) / 2, (y1 + y2) / 2)
+
+    def scale(self, factor: float) -> None:
+        x1, y1, x2, y2 = self.bounds()
+        center = Point((x1 + x2) / 2, (y1 + y2) / 2)
+        for child in self.children:
+            cx, cy = child.center() if hasattr(child, "center") else Point((child.bounds()[0] + child.bounds()[2]) / 2, (child.bounds()[1] + child.bounds()[3]) / 2)
+            child.move((cx - center.x) * (factor - 1), (cy - center.y) * (factor - 1))
+            if hasattr(child, "scale"):
+                child.scale(factor)
+
+    def rotate(self, angle_degrees: float) -> None:
+        center = self.center()
+        matrix = Matrix3.rotation(math.radians(angle_degrees), center=center)
+        for child in self.children:
+            child_center = child.center() if hasattr(child, "center") else Point((child.bounds()[0] + child.bounds()[2]) / 2, (child.bounds()[1] + child.bounds()[3]) / 2)
+            new_center = matrix.apply(child_center)
+            child.move(new_center.x - child_center.x, new_center.y - child_center.y)
+            if hasattr(child, "rotate"):
+                child.rotate(angle_degrees)
+
+    def flip_horizontal(self) -> None:
+        center = self.center()
+        for child in self.children:
+            child_center = child.center() if hasattr(child, "center") else Point((child.bounds()[0] + child.bounds()[2]) / 2, (child.bounds()[1] + child.bounds()[3]) / 2)
+            child.move((center.x - child_center.x) * 2, 0)
+            if hasattr(child, "flip_horizontal"):
+                child.flip_horizontal()
+
+    def flip_vertical(self) -> None:
+        center = self.center()
+        for child in self.children:
+            child_center = child.center() if hasattr(child, "center") else Point((child.bounds()[0] + child.bounds()[2]) / 2, (child.bounds()[1] + child.bounds()[3]) / 2)
+            child.move(0, (center.y - child_center.y) * 2)
+            if hasattr(child, "flip_vertical"):
+                child.flip_vertical()
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        if not self.children:
+            return 0.0, 0.0, 0.0, 0.0
+        bounds = [child.bounds() for child in self.children]
+        return (
+            min(item[0] for item in bounds),
+            min(item[1] for item in bounds),
+            max(item[2] for item in bounds),
+            max(item[3] for item in bounds),
+        )
+
+    def outline_points(self) -> list[tuple[float, float]]:
+        x1, y1, x2, y2 = self.bounds()
+        return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+    def hit_test(self, x: float, y: float) -> bool:
+        return any(child.hit_test(x, y) for child in self.children)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": "group",
+            "name": self.name,
+            "children": [child.to_dict() for child in self.children],
+            "connectors": [connector.to_dict() for connector in self.connectors],
+            "metadata": dict(self.metadata),
+            "z_order": self.z_order,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "GroupShape":
+        return cls(
+            name=str(payload.get("name", "组件")),
+            children=[shape_from_dict(child) for child in payload.get("children", [])],
+            connectors=[ConnectorShape.from_dict(connector) for connector in payload.get("connectors", [])],
+            metadata={str(key): str(value) for key, value in payload.get("metadata", {}).items()},
+            id=payload.get("id", new_id("group")),
+            z_order=int(payload.get("z_order", 0)),
+        )
+
+
+@dataclass
 class ConnectorShape:
     start_shape_id: str
     end_shape_id: str
@@ -718,7 +811,7 @@ class ConnectorShape:
         )
 
 
-Shape = FlowchartShape | LineShape | CurveShape | TextShape | RasterImageShape
+Shape = FlowchartShape | LineShape | CurveShape | TextShape | RasterImageShape | GroupShape
 
 
 def shape_from_dict(payload: dict) -> Shape:
@@ -733,6 +826,8 @@ def shape_from_dict(payload: dict) -> Shape:
         return TextShape.from_dict(payload)
     if shape_type == "raster_image":
         return RasterImageShape.from_dict(payload)
+    if shape_type == "group":
+        return GroupShape.from_dict(payload)
     raise ValueError(f"Unsupported shape type: {shape_type!r}")
 
 
