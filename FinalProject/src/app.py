@@ -14,6 +14,7 @@ from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_rep
 from engine.canvas_renderer import CanvasRenderer
 from engine.command import History
 from engine.guides import compute_guides
+from engine.physics import build_world, sync_to_document
 from engine.renderer import Renderer
 from engine.selection import apply_group_resize, apply_group_rotation, bounds_from_handle, handle_at, rotation_delta, selection_bounds, shapes_in_rect
 from engine.text_style import TEXT_SIZE_MAX, TEXT_SIZE_MIN, apply_text_style as apply_text_style_to_shapes, clamp_font_size
@@ -387,6 +388,12 @@ class VectorFlowApp(tk.Tk):
         self._replay_index: int = 0
         self._replay_after_id: str | None = None
 
+        # 物理沙盒：播放时把所有矢量图形当作刚体模拟
+        self._physics_world = None
+        self._physics_after_id: str | None = None
+        self._physics_snapshot: dict | None = None
+        self.physics_btn_label = tk.StringVar(value="▶ 播放")
+
         self._configure_style()
         self._build_menu()
         self._build_layout()
@@ -535,6 +542,7 @@ class VectorFlowApp(tk.Tk):
         ttk.Button(bar, text="复制", style="Tool.TButton", command=self.copy_selection).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="粘贴", style="Tool.TButton", command=self.paste_selection).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="算法回放", style="Tool.TButton", command=self.play_algorithm_replay).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, textvariable=self.physics_btn_label, style="Accent.TButton", command=self.toggle_physics).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="清屏", style="Danger.TButton", command=self.clear_canvas).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
 
@@ -1087,7 +1095,7 @@ class VectorFlowApp(tk.Tk):
 
     def _tick_connector_animation(self) -> None:
         self._connector_animation_after_id = None
-        if self.animate_connectors.get() and self.document.connectors and self._replay_sequence is None:
+        if self.animate_connectors.get() and self.document.connectors and self._replay_sequence is None and not self.physics_running:
             self._connector_animation_phase = (self._connector_animation_phase + 2) % 100_000
             self.request_redraw(draft=True)
         self._schedule_connector_animation()
@@ -1141,7 +1149,73 @@ class VectorFlowApp(tk.Tk):
         if redraw and had_replay:
             self.redraw(draft=True)
 
+    # ── 物理沙盒 ────────────────────────────────────────────────────
+    @property
+    def physics_running(self) -> bool:
+        return self._physics_world is not None
+
+    def toggle_physics(self) -> None:
+        if self.physics_running:
+            self.stop_physics()
+        else:
+            self.start_physics()
+
+    def start_physics(self) -> None:
+        if not self.document.shapes:
+            self._update_status("画布上没有图形，无法开始物理模拟")
+            return
+        # 停掉其它动画/回放，避免与物理循环抢重绘。
+        self.stop_algorithm_replay(redraw=False)
+        # 快照当前文档，停止时恢复，使物理模拟可逆且不污染原作品。
+        self._physics_snapshot = self.document.to_dict()
+        self.selected_ids.clear()
+        self._guides = []
+        # 用当前可视区域作为容器，让所有图形落在屏幕内弹跳。
+        container = self._viewport_world_rect()
+        self._physics_world = build_world(self.document, container, gravity=1600.0)
+        self.physics_btn_label.set("■ 停止")
+        self._update_status("物理模拟运行中：所有图形受重力下落、碰撞、弹跳")
+        self._tick_physics()
+
+    def _viewport_world_rect(self) -> tuple[float, float, float, float]:
+        width = max(1, self.canvas.winfo_width())
+        height = max(1, self.canvas.winfo_height())
+        left, top = self.screen_to_world(0, 0)
+        right, bottom = self.screen_to_world(width, height)
+        return (left, top, right, bottom)
+
+    def _tick_physics(self) -> None:
+        self._physics_after_id = None
+        world = self._physics_world
+        if world is None:
+            return
+        # 每帧推进两个固定子步，兼顾稳定性与实时速度。
+        world.step(1 / 120)
+        world.step(1 / 120)
+        sync_to_document(world)
+        self.document._rebuild_shape_index()
+        self.redraw(draft=True)
+        self._physics_after_id = self.after(16, self._tick_physics)
+
+    def stop_physics(self) -> None:
+        if self._physics_after_id is not None:
+            try:
+                self.after_cancel(self._physics_after_id)
+            except tk.TclError:
+                pass
+            self._physics_after_id = None
+        was_running = self._physics_world is not None
+        self._physics_world = None
+        self.physics_btn_label.set("▶ 播放")
+        if was_running and self._physics_snapshot is not None:
+            self.document.replace_from_dict(self._physics_snapshot)
+            self._physics_snapshot = None
+            self.selected_ids.clear()
+            self.redraw()
+            self._update_status("已停止物理模拟，图形已恢复原位")
+
     def _on_close(self) -> None:
+        self.stop_physics()
         self.stop_algorithm_replay(redraw=False)
         if self._connector_animation_after_id is not None:
             try:
@@ -1196,6 +1270,8 @@ class VectorFlowApp(tk.Tk):
         )))
 
     def on_left_down(self, event) -> None:
+        if self.physics_running:
+            return
         if self._inline_editor:
             self._commit_inline_editor()
             return
@@ -1277,7 +1353,7 @@ class VectorFlowApp(tk.Tk):
             self.drag_mode = "curve_trace"
 
     def on_left_drag(self, event) -> None:
-        if self.drag_start is None:
+        if self.physics_running or self.drag_start is None:
             return
         current = self.screen_to_world(event.x, event.y)
         tool = self.current_tool.get()
@@ -1345,7 +1421,7 @@ class VectorFlowApp(tk.Tk):
                 self.canvas.create_rectangle(x0, y0, x1, y1, outline="#5AFF8A", dash=(4, 3), width=2, tags="preview")
 
     def on_left_up(self, event) -> None:
-        if self.drag_start is None:
+        if self.physics_running or self.drag_start is None:
             return
         current = self.screen_to_world(event.x, event.y)
         tool = self.current_tool.get()
@@ -1422,6 +1498,8 @@ class VectorFlowApp(tk.Tk):
         self.connector_endpoint_drag = None
 
     def on_double_click(self, event) -> None:
+        if self.physics_running:
+            return
         point = self.screen_to_world(event.x, event.y)
         shape = self.document.shape_at(*point)
         if isinstance(shape, (FlowchartShape, TextShape)):

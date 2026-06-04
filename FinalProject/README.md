@@ -38,6 +38,7 @@ VectorFlow 是一个面向计算机图形学课程设计的矢量流程图编辑
 
 ## 创新点
 
+- **矢量物理沙盒**：点击「▶ 播放」，画布上所有矢量图形立刻变为刚体——圆形是钢球、直线/曲线是斜坡与障碍，在重力下下落、碰撞、弹跳、堆叠。底层是自研的基于冲量（impulse-based）2D 刚体引擎，含凸包建模、SAT 分离轴碰撞检测与面裁剪、库仑摩擦与角动量、Baumgarte 位置修正；「停止」后图形一键恢复原位，不污染作品。
 - **自研像素级渲染管线**：所有几何图元先由算法生成像素点，再写入 Pillow 后缓冲区显示，避免直接依赖系统图形 API。
 - **算法回放模式**：选中图形后点击"算法回放"，逐帧展示 Bresenham 描线、中点圆/椭圆、扫描线填充等像素生成过程，便于答辩展示图形学原理。
 - **动态连接线**：连接线显示沿路径流动的高亮像素，可用于表达流程方向或电路电流方向，底层基于 Bresenham 路径采样和相位偏移。
@@ -85,6 +86,7 @@ FinalProject/
 │   │   ├── canvas_renderer.py   # CanvasRenderer：编辑画布的原生矢量渲染，支持缩放/平移实时刷新
 │   │   ├── guides.py            # 对齐辅助线：移动图元时计算吸附与参考线
 │   │   ├── text_style.py        # 文本样式工具：字号约束与样式应用
+│   │   ├── physics.py           # 物理沙盒：自研基于冲量的 2D 刚体引擎（重力/碰撞/弹跳）
 │   │   ├── animation.py         # 动态连接线：沿 Bresenham 路径生成流动高亮像素
 │   │   ├── algorithm_replay.py  # 算法回放：把图元拆成可逐帧播放的像素序列
 │   │   ├── command.py           # History：全量快照式撤销栈
@@ -97,6 +99,7 @@ FinalProject/
 │   ├── test_document.py         # Document 模型测试
 │   ├── test_renderer_command.py # 渲染与撤销栈测试
 │   ├── test_canvas_renderer.py  # 原生画布渲染测试
+│   ├── test_physics.py          # 物理引擎测试（重力/碰撞/弹跳/静止/写回）
 │   ├── test_text_style.py       # 文本样式工具测试
 │   ├── test_ui_shell.py         # 编辑器界面元数据测试
 │   └── test_selection.py        # 选择逻辑测试
