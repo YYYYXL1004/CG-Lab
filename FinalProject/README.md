@@ -81,11 +81,14 @@ FinalProject/
 │   │   ├── shapes.py            # Shape 基类及各图元（FlowchartShape、LineShape、TextShape、ConnectorShape）
 │   │   └── style.py             # ShapeStyle：描边、填充、线宽、字体等样式属性
 │   ├── engine/                  # 渲染与交互引擎
-│   │   ├── renderer.py          # Renderer：调用 algorithms 将 Document 渲染到 PIL 图像
+│   │   ├── renderer.py          # Renderer：调用 algorithms 将 Document 渲染到 PIL 图像（用于 PNG 导出）
+│   │   ├── canvas_renderer.py   # CanvasRenderer：编辑画布的原生矢量渲染，支持缩放/平移实时刷新
+│   │   ├── guides.py            # 对齐辅助线：移动图元时计算吸附与参考线
+│   │   ├── text_style.py        # 文本样式工具：字号约束与样式应用
 │   │   ├── animation.py         # 动态连接线：沿 Bresenham 路径生成流动高亮像素
 │   │   ├── algorithm_replay.py  # 算法回放：把图元拆成可逐帧播放的像素序列
 │   │   ├── command.py           # History：全量快照式撤销栈
-│   │   └── selection.py         # 选择框、句柄检测、群组缩放辅助函数
+│   │   └── selection.py         # 选择框、句柄检测、群组缩放、旋转句柄辅助函数
 │   └── io_utils/
 │       └── serializer.py        # load_document / save_document（.vflow JSON 格式）
 ├── tests/
@@ -93,6 +96,9 @@ FinalProject/
 │   ├── test_animation_replay.py # 动态连接线与算法回放测试
 │   ├── test_document.py         # Document 模型测试
 │   ├── test_renderer_command.py # 渲染与撤销栈测试
+│   ├── test_canvas_renderer.py  # 原生画布渲染测试
+│   ├── test_text_style.py       # 文本样式工具测试
+│   ├── test_ui_shell.py         # 编辑器界面元数据测试
 │   └── test_selection.py        # 选择逻辑测试
 ├── assets/
 │   └── templates/demo.vflow     # 示例流程图文件
@@ -104,4 +110,9 @@ FinalProject/
 
 ## 说明
 
-Pillow 只用于像素缓冲区、文本渲染和 PNG 保存。核心几何图形没有使用 `Canvas.create_line`、`Canvas.create_rectangle`、`ImageDraw.line`、`ImageDraw.rectangle`、`ImageDraw.ellipse` 等系统绘图函数。
+项目采用双渲染管线：
+
+- **编辑画布**：使用 `CanvasRenderer` 在 tkinter Canvas 上做矢量渲染，保证缩放、平移、拖拽时的实时流畅交互。
+- **PNG 导出与算法回放**：使用 `Renderer`，所有几何图元由自研像素级算法（Bresenham、中点圆/椭圆、扫描线填充、Bezier 等）逐像素生成后写入 Pillow 后缓冲区，再保存为 PNG。
+
+Pillow 只用于像素缓冲区、文本渲染和 PNG 保存。导出与回放路径上的核心几何图形没有使用 `ImageDraw.line`、`ImageDraw.rectangle`、`ImageDraw.ellipse` 等系统绘图函数，完整保留了图形学算法的展示价值。
