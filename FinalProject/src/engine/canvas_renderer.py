@@ -140,6 +140,9 @@ class CanvasRenderer:
         tags: tuple[str, ...],
         draft: bool,
     ) -> None:
+        if shape.kind == "er_table":
+            self._draw_er_table_shape(shape, zoom, pan, tags)
+            return
         is_circuit = shape.kind in CIRCUIT_KINDS
         outline = shape.outline_points()
         stroke_width = self._stroke_width(shape.style.stroke_width, zoom)
@@ -208,6 +211,58 @@ class CanvasRenderer:
             justify=shape.style.text_align,
             tags=tags,
         )
+
+    def _draw_er_table_shape(
+        self,
+        shape: FlowchartShape,
+        zoom: float,
+        pan: tuple[float, float],
+        tags: tuple[str, ...],
+    ) -> None:
+        sx1, sy1 = self._screen(shape.x, shape.y, zoom, pan)
+        sx2, sy2 = self._screen(shape.x + shape.width, shape.y + shape.height, zoom, pan)
+        header_h = 34 * zoom
+        row_h = 26 * zoom
+        stroke_width = self._stroke_width(shape.style.stroke_width, zoom)
+        body_fill = shape.style.fill or ""
+        self.canvas.create_rectangle(sx1, sy1, sx2, sy2, fill=body_fill, outline="#184E58", width=stroke_width, tags=tags)
+        self.canvas.create_rectangle(sx1, sy1, sx2, sy1 + header_h, fill="#2A9D8F", outline="#184E58", width=stroke_width, tags=tags)
+
+        lines = shape.text.splitlines() if shape.text else [""]
+        title = lines[0] if lines else ""
+        self.canvas.create_text(
+            sx1 + 12 * zoom,
+            sy1 + header_h / 2,
+            text=title,
+            fill="#FFFFFF",
+            font=self._font(shape.style.font_size + 2, True, zoom),
+            anchor="w",
+            tags=tags,
+        )
+        for index, raw in enumerate(lines[1:]):
+            top = sy1 + header_h + index * row_h
+            self.canvas.create_line(sx1, top, sx2, top, fill="#D7E4EA", width=1, tags=tags)
+            marker, label = _er_marker_and_label(raw)
+            marker_color = "#E76F51" if "FK" in marker else "#264653"
+            if marker:
+                self.canvas.create_text(
+                    sx1 + 12 * zoom,
+                    top + row_h / 2,
+                    text=marker,
+                    fill=marker_color,
+                    font=self._font(10, True, zoom),
+                    anchor="w",
+                    tags=tags,
+                )
+            self.canvas.create_text(
+                sx1 + 58 * zoom,
+                top + row_h / 2,
+                text=label,
+                fill="#263238",
+                font=self._font(shape.style.font_size, False, zoom),
+                anchor="w",
+                tags=tags,
+            )
 
     def _draw_text_shape(self, shape: TextShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...]) -> None:
         x1, y1, x2, _y2 = shape.bounds()
@@ -437,3 +492,11 @@ class CanvasRenderer:
             return {}
         arrow = "both" if start and end else ("first" if start else "last")
         return {"arrow": arrow, "arrowshape": (12, 14, 5)}
+
+
+def _er_marker_and_label(raw: str) -> tuple[str, str]:
+    text = raw.strip()
+    for prefix in ("PK/FK ", "FK/PK ", "PK ", "FK "):
+        if text.startswith(prefix):
+            return prefix.strip(), text[len(prefix) :].strip()
+    return "", text

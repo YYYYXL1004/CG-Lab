@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from core.document import Document
 from core.shapes import ConnectorShape, FlowchartShape, LineShape
+from core.style import ShapeStyle
 from engine.command import History
 from engine.algorithm_replay import ReplayFrame
 from engine.renderer import Renderer
@@ -21,6 +22,16 @@ class RendererCommandTests(unittest.TestCase):
 
         self.assertEqual(image.mode, "RGBA")
         self.assertNotEqual(image.getpixel((10, 10)), image.getpixel((0, 0)))
+
+    def test_renderer_uses_er_table_shape_fill(self):
+        document = Document(background="#000000")
+        document.add_shape(
+            FlowchartShape("er_table", 10, 10, 220, 90, "users\nPK id : INT", ShapeStyle(fill="#AA3344"))
+        )
+
+        image = Renderer(260, 130).render(document)
+
+        self.assertEqual(image.getpixel((20, 60)), (170, 51, 68, 255))
 
     def test_renderer_overlays_animated_connector_pixels(self):
         document = Document()

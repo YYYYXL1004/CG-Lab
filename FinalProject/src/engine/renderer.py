@@ -83,6 +83,9 @@ class Renderer:
 
     def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
         if isinstance(shape, FlowchartShape):
+            if shape.kind == "er_table":
+                self._draw_er_table_shape(image, pixels, shape, zoom, pan)
+                return
             points = [self._world_to_screen(point, zoom, pan) for point in shape.outline_points()]
             is_circuit = shape.kind in CIRCUIT_KINDS
             if not draft and not is_circuit:
@@ -135,6 +138,32 @@ class Renderer:
             bitmap = shape.resized_image(target_w, target_h)
             sx, sy = self._world_to_screen((shape.x, shape.y), zoom, pan)
             image.alpha_composite(bitmap, (sx, sy))
+
+    def _draw_er_table_shape(self, image: Image.Image, pixels, shape: FlowchartShape, zoom: float, pan: tuple[float, float]) -> None:
+        x1, y1 = self._world_to_screen((shape.x, shape.y), zoom, pan)
+        x2, y2 = self._world_to_screen((shape.x + shape.width, shape.y + shape.height), zoom, pan)
+        header_h = max(18, round(34 * zoom))
+        row_h = max(16, round(26 * zoom))
+        _fill_polygon(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2)], shape.style.fill)
+        _draw_polyline(pixels, [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)], "#184E58", max(1, round(2 * zoom)))
+        _fill_polygon(pixels, [(x1, y1), (x2, y1), (x2, y1 + header_h), (x1, y1 + header_h)], "#2A9D8F")
+        _draw_line(pixels, (x1, y1 + header_h), (x2, y1 + header_h), "#184E58", max(1, round(2 * zoom)))
+
+        draw = ImageDraw.Draw(image)
+        lines = shape.text.splitlines() if shape.text else [""]
+        title_font = _load_font(max(8, round((shape.style.font_size + 2) * zoom)), bold=True)
+        field_font = _load_font(max(8, round(shape.style.font_size * zoom)), bold=False)
+        marker_font = _load_font(max(8, round(10 * zoom)), bold=True)
+        if lines:
+            draw.text((x1 + round(12 * zoom), y1 + max(2, (header_h - title_font.size) // 2)), lines[0], fill=_color("#FFFFFF"), font=title_font)
+        for index, raw in enumerate(lines[1:]):
+            top = y1 + header_h + index * row_h
+            _draw_line(pixels, (x1, top), (x2, top), "#D7E4EA", 1)
+            marker, label = _er_marker_and_label(raw)
+            if marker:
+                marker_color = "#E76F51" if "FK" in marker else "#264653"
+                draw.text((x1 + round(12 * zoom), top + max(1, (row_h - marker_font.size) // 2)), marker, fill=_color(marker_color), font=marker_font)
+            draw.text((x1 + round(58 * zoom), top + max(1, (row_h - field_font.size) // 2)), label, fill=_color("#263238"), font=field_font)
 
     def _draw_connector(
         self,
@@ -453,3 +482,11 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     font = ImageFont.load_default()
     _font_cache[key] = font
     return font
+
+
+def _er_marker_and_label(raw: str) -> tuple[str, str]:
+    text = raw.strip()
+    for prefix in ("PK/FK ", "FK/PK ", "PK ", "FK "):
+        if text.startswith(prefix):
+            return prefix.strip(), text[len(prefix) :].strip()
+    return "", text

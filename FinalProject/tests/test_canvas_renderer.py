@@ -178,6 +178,18 @@ class CanvasRendererTests(unittest.TestCase):
         polygon_calls = [call for call in canvas.calls if call[0] == "create_polygon"]
         self.assertEqual(polygon_calls[0][2]["fill"], "#AA3344")
 
+    def test_er_table_render_uses_shape_fill_for_native_canvas(self):
+        canvas = FakeCanvas()
+        document = Document()
+        document.add_shape(
+            FlowchartShape("er_table", 20, 30, 220, 90, "users\nPK id : INT", ShapeStyle(fill="#AA3344"))
+        )
+
+        CanvasRenderer(canvas).render(document)
+
+        rectangle_calls = [call for call in canvas.calls if call[0] == "create_rectangle"]
+        self.assertEqual(rectangle_calls[0][2]["fill"], "#AA3344")
+
 
 if __name__ == "__main__":
     unittest.main()

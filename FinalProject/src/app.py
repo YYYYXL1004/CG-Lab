@@ -12,6 +12,7 @@ from PIL import Image
 
 from algorithms.bezier import catmull_rom_polyline
 from core.document import Document
+from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, RasterImageShape, Shape, TextShape
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
@@ -516,6 +517,7 @@ class VectorFlowApp(tk.Tk):
         file_menu.add_command(label="另存为...", accelerator="Ctrl+Shift+S", command=self.save_document_as)
         file_menu.add_separator()
         file_menu.add_command(label="导入风景照片...", command=self.import_bitmap_photo)
+        file_menu.add_command(label="SQL -> ER...", command=self.open_sql_er_dialog)
         file_menu.add_separator()
         file_menu.add_command(label="导出 PNG...", accelerator="Ctrl+E", command=self.export_png)
         file_menu.add_separator()
@@ -558,6 +560,7 @@ class VectorFlowApp(tk.Tk):
         ttk.Button(bar, text="新建", style="Tool.TButton", command=self.new_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="打开", style="Tool.TButton", command=self.open_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="导入照片", style="Tool.TButton", command=self.import_bitmap_photo).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, text="SQL -> ER", style="Accent.TButton", command=self.open_sql_er_dialog).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="保存", style="Accent.TButton", command=self.save_document).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="导出 PNG", style="Tool.TButton", command=self.export_png).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
@@ -1643,6 +1646,88 @@ class VectorFlowApp(tk.Tk):
         return ("bottom", "top") if ey >= sy else ("top", "bottom")
 
     # ── Inline text editor ──────────────────────────────────────────
+
+    def open_sql_er_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("SQL -> ER 图")
+        dlg.geometry("780x560")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        th = self._theme()
+        dlg.configure(bg=th["panel_bg"])
+        top = ttk.Frame(dlg, style="Panel.TFrame")
+        top.pack(side=tk.TOP, fill=tk.X, padx=12, pady=(12, 6))
+        ttk.Label(top, text="演示模板").pack(side=tk.LEFT, padx=(0, 8))
+        template_names = [template.name for template in ER_SQL_TEMPLATES]
+        template_var = tk.StringVar(value=template_names[0] if template_names else "")
+        template_box = ttk.Combobox(top, textvariable=template_var, values=template_names, state="readonly", width=24)
+        template_box.pack(side=tk.LEFT, padx=(0, 8))
+
+        editor_frame = ttk.Frame(dlg, style="Panel.TFrame")
+        editor_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        editor = tk.Text(
+            editor_frame,
+            wrap=tk.NONE,
+            bg=th["editor_bg"],
+            fg=th["editor_fg"],
+            insertbackground=th["editor_caret"],
+            font=("Consolas", 11),
+            relief=tk.SOLID,
+            bd=1,
+            undo=True,
+        )
+        yscroll = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=editor.yview)
+        xscroll = ttk.Scrollbar(editor_frame, orient=tk.HORIZONTAL, command=editor.xview)
+        editor.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        editor.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        editor_frame.rowconfigure(0, weight=1)
+        editor_frame.columnconfigure(0, weight=1)
+
+        def load_template() -> None:
+            name = template_var.get()
+            template = next((item for item in ER_SQL_TEMPLATES if item.name == name), None)
+            if template is None:
+                return
+            editor.delete("1.0", tk.END)
+            editor.insert("1.0", template.sql)
+
+        def generate() -> None:
+            sql = editor.get("1.0", tk.END).strip()
+            if not sql:
+                messagebox.showwarning("SQL -> ER 图", "请先输入 CREATE TABLE SQL。", parent=dlg)
+                return
+            try:
+                schema = parse_create_table_sql(sql)
+            except ValueError as exc:
+                messagebox.showerror("SQL 解析失败", str(exc), parent=dlg)
+                return
+            previous_state = self.document.to_dict()
+            self.document = build_er_document(schema)
+            self.document.background = self._theme()["canvas_bg"]
+            self.file_path = None
+            self.selected_ids.clear()
+            self.current_tool.set("select")
+            self.zoom = 1.0
+            self.pan = (40.0, 40.0)
+            self.history = History()
+            self.history.push(previous_state)
+            self.history.push(self.document.to_dict())
+            self.redraw()
+            self._update_tool_button_states()
+            self._update_status(f"已从 SQL 生成 ER 图：{len(schema.tables)} 张表，{len(self.document.connectors)} 条外键连线")
+            dlg.destroy()
+
+        ttk.Button(top, text="加载模板", style="Tool.TButton", command=load_template).pack(side=tk.LEFT, padx=4)
+        actions = ttk.Frame(dlg, style="Panel.TFrame")
+        actions.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(6, 12))
+        ttk.Button(actions, text="一键生成 ER 图", style="Accent.TButton", command=generate).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(actions, text="取消", style="Tool.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+
+        load_template()
+        editor.focus_set()
 
     def _open_inline_editor(self, wx: float, wy: float, initial_text: str = "") -> None:
         sx, sy = self.world_to_screen((wx, wy))
