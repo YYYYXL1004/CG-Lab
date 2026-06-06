@@ -44,6 +44,7 @@ class Renderer:
         chrome: dict | None = None,
         connector_animation_phase: int | None = None,
         replay_frame: ReplayFrame | None = None,
+        circuit_state: dict | None = None,
     ) -> Image.Image:
         ch = chrome or {}
         grid_color = ch.get("grid", "#2A2A3E")
@@ -57,12 +58,14 @@ class Renderer:
         if show_grid:
             self._draw_grid(pixels, document.grid_size, zoom, pan, grid_color)
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
-            self._draw_shape(image, pixels, shape, zoom, pan, draft=draft)
+            self._draw_shape(image, pixels, shape, zoom, pan, draft=draft, circuit_state=circuit_state)
         for connector in document.connectors:
+            energized = circuit_state is not None and connector.id in circuit_state.get("energized_connector_ids", set())
             self._draw_connector(
                 pixels, document, connector, zoom, pan,
-                animation_phase=connector_animation_phase,
+                animation_phase=connector_animation_phase if energized or circuit_state is None else None,
                 flow_color=connector_flow_color,
+                energized=energized,
             )
         if selected_ids:
             self._draw_selection_overlay(pixels, document, selected_ids, zoom, pan, sel_color, sel_handle_fill)
@@ -81,31 +84,42 @@ class Renderer:
         for y in range(offset_y, self.height, spacing):
             _draw_line(pixels, (0, y), (self.width - 1, y), color)
 
-    def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
+    def _draw_shape(self, image: Image.Image, pixels, shape, zoom: float, pan: tuple[float, float], draft: bool = False, circuit_state: dict | None = None) -> None:
         if isinstance(shape, FlowchartShape):
             if shape.kind == "er_table":
                 self._draw_er_table_shape(image, pixels, shape, zoom, pan)
                 return
             points = [self._world_to_screen(point, zoom, pan) for point in shape.outline_points()]
             is_circuit = shape.kind in CIRCUIT_KINDS
+            stroke = shape.style.stroke
+            if circuit_state is not None:
+                if shape.id in circuit_state.get("fault_shape_ids", set()):
+                    stroke = "#FF4D4F"
+                elif shape.id in circuit_state.get("glowing_shape_ids", set()):
+                    stroke = "#FFE66D"
+                    self._draw_circuit_glow(pixels, shape, zoom, pan)
             if not draft and not is_circuit:
                 _fill_polygon(pixels, points, shape.style.fill)
             if not is_circuit:
-                _draw_polyline(pixels, points + [points[0]], shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
+                _draw_polyline(pixels, points + [points[0]], stroke, max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
             for a, b in shape.extra_segments():
-                _draw_line(pixels, self._world_to_screen(a, zoom, pan), self._world_to_screen(b, zoom, pan), shape.style.stroke, max(1, round(shape.style.stroke_width * zoom)))
+                _draw_line(pixels, self._world_to_screen(a, zoom, pan), self._world_to_screen(b, zoom, pan), stroke, max(1, round(shape.style.stroke_width * zoom)))
             if shape.kind == "database":
                 x1, y1, x2, y2 = shape.bounds()
                 cx = (x1 + x2) / 2
                 rx = (x2 - x1) / 2
                 ry = max(4, (y2 - y1) * 0.14)
                 for cy in (y1 + ry, y2 - ry):
-                    _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), rx * zoom, ry * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
+                    _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), rx * zoom, ry * zoom, stroke, None, max(1, round(shape.style.stroke_width * zoom)))
             elif shape.kind == "voltage_source":
                 x1, y1, x2, y2 = shape.bounds()
                 cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
                 r = min(x2 - x1, y2 - y1) * 0.35
-                _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), r * zoom, r * zoom, shape.style.stroke, None, max(1, round(shape.style.stroke_width * zoom)))
+                _draw_ellipse(pixels, self._world_to_screen((cx, cy), zoom, pan), r * zoom, r * zoom, stroke, None, max(1, round(shape.style.stroke_width * zoom)))
+            if circuit_state is not None and shape.id in circuit_state.get("closed_switch_ids", set()):
+                self._draw_closed_switch_overlay(pixels, shape, zoom, pan)
+            if circuit_state is not None and shape.id in circuit_state.get("open_switch_ids", set()):
+                self._draw_open_switch_gap(pixels, shape, zoom, pan)
             if shape.text:
                 text_bounds = shape.bounds()
                 if shape.kind == "inductor":
@@ -116,7 +130,7 @@ class Renderer:
         elif isinstance(shape, GroupShape):
             nested = Document(shapes=list(shape.children), connectors=list(shape.connectors), background="#00000000")
             for child in sorted(shape.children, key=lambda item: item.z_order):
-                self._draw_shape(image, pixels, child, zoom, pan, draft=draft)
+                self._draw_shape(image, pixels, child, zoom, pan, draft=draft, circuit_state=circuit_state)
             for connector in shape.connectors:
                 self._draw_connector(pixels, nested, connector, zoom, pan)
         elif isinstance(shape, LineShape):
@@ -144,6 +158,26 @@ class Renderer:
             bitmap = shape.resized_image(target_w, target_h)
             sx, sy = self._world_to_screen((shape.x, shape.y), zoom, pan)
             image.alpha_composite(bitmap, (sx, sy))
+
+    def _draw_circuit_glow(self, pixels, shape: FlowchartShape, zoom: float, pan: tuple[float, float]) -> None:
+        x1, y1, x2, y2 = shape.bounds()
+        cx, cy = self._world_to_screen(((x1 + x2) / 2, (y1 + y2) / 2), zoom, pan)
+        rx = max(10, round((x2 - x1 + 40) * zoom / 2))
+        ry = max(10, round((y2 - y1 + 36) * zoom / 2))
+        _draw_ellipse(pixels, (cx, cy), rx, ry, "#FFE66D55", "#FFE66D33", 1)
+
+    def _draw_closed_switch_overlay(self, pixels, shape: FlowchartShape, zoom: float, pan: tuple[float, float]) -> None:
+        x, y, w, h = shape.x, shape.y, shape.width, shape.height
+        cy = y + h / 2
+        a = self._world_to_screen((x + w * 0.2, cy), zoom, pan)
+        b = self._world_to_screen((x + w * 0.8, cy), zoom, pan)
+        _draw_line(pixels, a, b, "#5BFFCF", max(3, round(4 * zoom)))
+
+    def _draw_open_switch_gap(self, pixels, shape: FlowchartShape, zoom: float, pan: tuple[float, float]) -> None:
+        x, y, w, h = shape.x, shape.y, shape.width, shape.height
+        cy = y + h / 2
+        sx, sy = self._world_to_screen((x + w * 0.8, cy), zoom, pan)
+        _draw_ellipse(pixels, (sx, sy), max(4, round(5 * zoom)), max(4, round(5 * zoom)), "#FF4D4F", None, 2)
 
     def _draw_er_table_shape(self, image: Image.Image, pixels, shape: FlowchartShape, zoom: float, pan: tuple[float, float]) -> None:
         x1, y1 = self._world_to_screen((shape.x, shape.y), zoom, pan)
@@ -180,12 +214,14 @@ class Renderer:
         pan: tuple[float, float],
         animation_phase: int | None = None,
         flow_color: str = "#5BFFCF",
+        energized: bool = False,
     ) -> None:
         points = [self._world_to_screen(point, zoom, pan) for point in document.connector_points(connector)]
         if len(points) < 2:
             return
-        width = max(1, round(connector.style.stroke_width * zoom))
-        _draw_polyline(pixels, points, connector.style.stroke, width, connector.style.dash or None)
+        width = max(1, round((connector.style.stroke_width + (1 if energized else 0)) * zoom))
+        line_color = flow_color if energized else connector.style.stroke
+        _draw_polyline(pixels, points, line_color, width, connector.style.dash or None)
         if animation_phase is not None:
             flow_pixels = animated_flow_pixels(
                 points,
@@ -195,9 +231,9 @@ class Renderer:
             )
             _draw_points(pixels, flow_pixels, flow_color, max(2, width + 1))
         if connector.arrow_end != "none":
-            _draw_arrowhead(pixels, points[-2], points[-1], connector.style.stroke, connector.arrow_end)
+            _draw_arrowhead(pixels, points[-2], points[-1], line_color, connector.arrow_end)
         if connector.arrow_start != "none":
-            _draw_arrowhead(pixels, points[1], points[0], connector.style.stroke, connector.arrow_start)
+            _draw_arrowhead(pixels, points[1], points[0], line_color, connector.arrow_start)
 
     def _draw_replay_frame(
         self,

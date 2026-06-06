@@ -18,6 +18,7 @@ from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, 
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.canvas_renderer import CanvasRenderer
+from engine.circuit_demo import CircuitDemo, build_circuit_demo_document, circuit_visual_state
 from engine.command import History
 from engine.guides import compute_guides
 from engine.physics import build_world, sync_to_document
@@ -442,6 +443,14 @@ class VectorFlowApp(tk.Tk):
         self._replay_index: int = 0
         self._replay_after_id: str | None = None
 
+        self._circuit_demo: CircuitDemo | None = None
+        self._circuit_powered = False
+        self._circuit_switch_closed = True
+        self._circuit_fault_active = False
+        self.circuit_power_label = tk.StringVar(value="⚡ 通电")
+        self.circuit_switch_label = tk.StringVar(value="断开开关")
+        self.circuit_fault_label = tk.StringVar(value="制造故障")
+
         # 物理沙盒：播放时把所有矢量图形当作刚体模拟
         self._physics_world = None
         self._physics_after_id: str | None = None
@@ -635,6 +644,12 @@ class VectorFlowApp(tk.Tk):
         ttk.Button(bar, text="算法回放", style="Tool.TButton", command=self.play_algorithm_replay).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, textvariable=self.physics_btn_label, style="Accent.TButton", command=self.toggle_physics).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Button(bar, text="清屏", style="Danger.TButton", command=self.clear_canvas).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
+
+        ttk.Button(bar, text="电路秀", style="Tool.TButton", command=self.load_circuit_template).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, textvariable=self.circuit_power_label, style="Accent.TButton", command=self.toggle_circuit_power).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, textvariable=self.circuit_switch_label, style="Tool.TButton", command=self.toggle_circuit_switch).pack(side=tk.LEFT, padx=2, pady=4)
+        ttk.Button(bar, textvariable=self.circuit_fault_label, style="Danger.TButton", command=self.toggle_circuit_fault).pack(side=tk.LEFT, padx=2, pady=4)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
 
         ttk.Button(bar, textvariable=self.theme_btn_label, style="Tool.TButton", command=self.toggle_theme).pack(side=tk.LEFT, padx=2, pady=4)
@@ -902,41 +917,92 @@ class VectorFlowApp(tk.Tk):
         self.document.add_connector(ConnectorShape(step.id, decision.id, "right", "left"))
 
     def load_circuit_template(self) -> None:
-        """Replace the canvas with a battery → switch → resistor → LED loop."""
+        """Replace the canvas with a branching circuit demo."""
         if self.document.shapes or self.document.connectors:
-            if not messagebox.askyesno("加载默认电路", "当前画布将被替换为默认电路模板，是否继续？"):
+            if not messagebox.askyesno("加载电路秀", "当前画布将被替换为电路演示模板，是否继续？"):
                 return
-        self.document.shapes.clear()
-        self.document.connectors.clear()
+        demo = build_circuit_demo_document()
+        self._circuit_demo = demo
+        self.document = demo.document
+        self.document.background = self._theme()["canvas_bg"]
+        self.file_path = None
+        self.history = History()
+        self.history.push(self.document.to_dict())
         self.selected_ids.clear()
-
-        style = ShapeStyle(stroke=self.stroke_color.get(), fill=self.fill_color.get(),
-                           stroke_width=self.stroke_width.get())
-        wire = ShapeStyle(stroke=self.stroke_color.get(), fill=None,
-                          stroke_width=self.stroke_width.get())
-
-        # Uniform height (50) + uniform 40px gaps → top-row wires stay flat and
-        # the bottom-bottom elbow degenerates into a clean U (no backtracks).
-        battery = FlowchartShape("battery", 150, 200, 70, 50, "", style)
-        switch = FlowchartShape("switch", 260, 200, 90, 50, "", style)
-        resistor = FlowchartShape("resistor", 390, 200, 100, 50, "R", style)
-        led = FlowchartShape("led", 530, 200, 110, 50, "", style)
-        for shape in (battery, switch, resistor, led):
-            self.document.add_shape(shape)
-
-        # Wires carry no arrowheads — circuit diagrams use plain lines.
-        def _wire(a, b, sa, ea, kind="straight"):
-            return ConnectorShape(a.id, b.id, sa, ea, kind=kind,
-                                  arrow_end="none", arrow_start="none", style=wire)
-
-        self.document.add_connector(_wire(battery, switch, "right", "left"))
-        self.document.add_connector(_wire(switch, resistor, "right", "left"))
-        self.document.add_connector(_wire(resistor, led, "right", "left"))
-        self.document.add_connector(_wire(led, battery, "bottom", "bottom", kind="elbow"))
-
-        self._push_history()
+        self._guides = []
+        self._circuit_powered = False
+        self._circuit_switch_closed = True
+        self._circuit_fault_active = False
+        self._sync_circuit_labels()
+        self.zoom = 1.0
+        self.pan = (40.0, 40.0)
         self.redraw()
-        self._update_status("已加载默认电路模板（电池 → 开关 → 电阻 → LED）")
+        self._update_status("已加载电路秀：电池、开关、双分支、LED、电容、电感和故障电阻")
+
+    def toggle_circuit_power(self) -> None:
+        if not self._ensure_circuit_demo():
+            return
+        self.stop_physics()
+        self.stop_algorithm_replay(redraw=False)
+        self._circuit_powered = not self._circuit_powered
+        self._sync_circuit_labels()
+        if self._circuit_powered:
+            self._schedule_connector_animation()
+        self.redraw(draft=True)
+        state = self._current_circuit_state()
+        self._update_status(state["message"] if state else None)
+
+    def toggle_circuit_switch(self) -> None:
+        if not self._ensure_circuit_demo():
+            return
+        self._circuit_switch_closed = not self._circuit_switch_closed
+        self._sync_circuit_labels()
+        self._schedule_connector_animation()
+        self.redraw(draft=True)
+        state = self._current_circuit_state()
+        self._update_status(state["message"] if state else None)
+
+    def toggle_circuit_fault(self) -> None:
+        if not self._ensure_circuit_demo():
+            return
+        self._circuit_fault_active = not self._circuit_fault_active
+        if self._circuit_fault_active:
+            self._circuit_powered = True
+            self._circuit_switch_closed = True
+        self._sync_circuit_labels()
+        self._schedule_connector_animation()
+        self.redraw(draft=True)
+        state = self._current_circuit_state()
+        self._update_status(state["message"] if state else None)
+
+    def _ensure_circuit_demo(self) -> bool:
+        if self._circuit_demo is not None:
+            return True
+        self.load_circuit_template()
+        return self._circuit_demo is not None
+
+    def _current_circuit_state(self) -> dict | None:
+        if self._circuit_demo is None:
+            return None
+        return circuit_visual_state(
+            self._circuit_demo,
+            powered=self._circuit_powered,
+            switch_closed=self._circuit_switch_closed,
+            fault_active=self._circuit_fault_active,
+            phase=self._connector_animation_phase,
+        )
+
+    def _sync_circuit_labels(self) -> None:
+        self.circuit_power_label.set("■ 断电" if self._circuit_powered else "⚡ 通电")
+        self.circuit_switch_label.set("闭合开关" if not self._circuit_switch_closed else "断开开关")
+        self.circuit_fault_label.set("恢复故障" if self._circuit_fault_active else "制造故障")
+
+    def _clear_circuit_demo_state(self) -> None:
+        self._circuit_demo = None
+        self._circuit_powered = False
+        self._circuit_switch_closed = True
+        self._circuit_fault_active = False
+        self._sync_circuit_labels()
 
     # ── Tool management ─────────────────────────────────────────────
 
@@ -1325,7 +1391,8 @@ class VectorFlowApp(tk.Tk):
             "connector_flow": "#5BFFCF",
             "replay": "#FFCF5A",
         }
-        phase = self._connector_animation_phase if self.animate_connectors.get() else None
+        circuit_state = self._current_circuit_state()
+        phase = self._connector_animation_phase if self.animate_connectors.get() or (circuit_state and circuit_state.get("powered")) else None
         self.canvas_renderer.render(
             self.document,
             self.zoom,
@@ -1337,6 +1404,7 @@ class VectorFlowApp(tk.Tk):
             chrome=chrome,
             connector_animation_phase=phase,
             replay_frame=self._replay_frame,
+            circuit_state=circuit_state,
         )
         self.canvas.tag_raise("preview")
         self.canvas.tag_raise("inline_editor")
@@ -1355,7 +1423,7 @@ class VectorFlowApp(tk.Tk):
         self.redraw(draft=True)
 
     def _schedule_connector_animation(self) -> None:
-        if not self.animate_connectors.get():
+        if not self.animate_connectors.get() and not self._circuit_animation_active():
             return
         if self._connector_animation_after_id is not None:
             return
@@ -1363,10 +1431,14 @@ class VectorFlowApp(tk.Tk):
 
     def _tick_connector_animation(self) -> None:
         self._connector_animation_after_id = None
-        if self.animate_connectors.get() and self.document.connectors and self._replay_sequence is None and not self.physics_running:
+        if (self.animate_connectors.get() or self._circuit_animation_active()) and self.document.connectors and self._replay_sequence is None and not self.physics_running:
             self._connector_animation_phase = (self._connector_animation_phase + 2) % 100_000
             self.request_redraw(draft=True)
         self._schedule_connector_animation()
+
+    def _circuit_animation_active(self) -> bool:
+        state = self._current_circuit_state()
+        return bool(state and state.get("powered"))
 
     def play_algorithm_replay(self) -> None:
         if self._replay_sequence is not None:
@@ -2321,6 +2393,7 @@ class VectorFlowApp(tk.Tk):
     def clear_canvas(self) -> None:
         if not messagebox.askyesno("清屏确认", "确定要清除所有图形吗？此操作可撤销。"):
             return
+        self._clear_circuit_demo_state()
         self.document.shapes.clear()
         self.document.connectors.clear()
         self.selected_ids.clear()
@@ -2376,6 +2449,7 @@ class VectorFlowApp(tk.Tk):
     # ── File I/O ────────────────────────────────────────────────────
 
     def new_document(self) -> None:
+        self._clear_circuit_demo_state()
         self.document = Document()
         self.history = History()
         self.history.push(self.document.to_dict())
@@ -2387,6 +2461,7 @@ class VectorFlowApp(tk.Tk):
         path = filedialog.askopenfilename(filetypes=[("VectorFlow", "*.vflow"), ("JSON", "*.json"), ("All files", "*.*")])
         if not path:
             return
+        self._clear_circuit_demo_state()
         self.document = load_document(path)
         self.history = History()
         self.history.push(self.document.to_dict())
@@ -2451,7 +2526,17 @@ class VectorFlowApp(tk.Tk):
             return
         width = max(1, self.canvas.winfo_width())
         height = max(1, self.canvas.winfo_height())
-        image = Renderer(width, height).render(self.document, self.zoom, self.pan, set(), self.show_grid.get())
+        circuit_state = self._current_circuit_state()
+        phase = self._connector_animation_phase if circuit_state and circuit_state.get("powered") else None
+        image = Renderer(width, height).render(
+            self.document,
+            self.zoom,
+            self.pan,
+            set(),
+            self.show_grid.get(),
+            connector_animation_phase=phase,
+            circuit_state=circuit_state,
+        )
         image.save(path, format="PNG")
         self._update_status(f"已导出: {path}")
 

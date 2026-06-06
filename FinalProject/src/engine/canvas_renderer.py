@@ -46,6 +46,7 @@ class CanvasRenderer:
         chrome: dict | None = None,
         connector_animation_phase: int | None = None,
         replay_frame: ReplayFrame | None = None,
+        circuit_state: dict | None = None,
     ) -> None:
         ch = chrome or {}
         self.canvas.configure(bg=document.background)
@@ -56,16 +57,18 @@ class CanvasRenderer:
         if show_grid:
             self._draw_grid(width, height, document.grid_size, zoom, pan, ch.get("grid", "#2A2A3E"))
         for connector in document.connectors:
+            energized = circuit_state is not None and connector.id in circuit_state.get("energized_connector_ids", set())
             self._draw_connector(
                 document,
                 connector,
                 zoom,
                 pan,
                 ch.get("connector_flow", "#5BFFCF"),
-                connector_animation_phase,
+                connector_animation_phase if energized or circuit_state is None else None,
+                energized=energized,
             )
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
-            self._draw_shape(shape, zoom, pan, draft=draft)
+            self._draw_shape(shape, zoom, pan, draft=draft, circuit_state=circuit_state)
         if selected_ids:
             self._draw_selection_overlay(
                 document,
@@ -102,10 +105,10 @@ class CanvasRenderer:
         for y in range(offset_y, height, spacing):
             self.canvas.create_line(0, y, width, y, fill=color, width=1, tags=tags)
 
-    def _draw_shape(self, shape, zoom: float, pan: tuple[float, float], draft: bool = False) -> None:
+    def _draw_shape(self, shape, zoom: float, pan: tuple[float, float], draft: bool = False, circuit_state: dict | None = None) -> None:
         tags = (CANVAS_TAG, SHAPE_TAG, f"shape:{shape.id}")
         if isinstance(shape, FlowchartShape):
-            self._draw_flowchart_shape(shape, zoom, pan, tags, draft)
+            self._draw_flowchart_shape(shape, zoom, pan, tags, draft, circuit_state)
         elif isinstance(shape, GroupShape):
             self._draw_group_shape(shape, zoom, pan, tags, draft)
         elif isinstance(shape, LineShape):
@@ -186,6 +189,7 @@ class CanvasRenderer:
         pan: tuple[float, float],
         tags: tuple[str, ...],
         draft: bool,
+        circuit_state: dict | None = None,
     ) -> None:
         if shape.kind == "er_table":
             self._draw_er_table_shape(shape, zoom, pan, tags)
@@ -193,12 +197,19 @@ class CanvasRenderer:
         is_circuit = shape.kind in CIRCUIT_KINDS
         outline = shape.outline_points()
         stroke_width = self._stroke_width(shape.style.stroke_width, zoom)
+        stroke = shape.style.stroke
+        if circuit_state is not None:
+            if shape.id in circuit_state.get("fault_shape_ids", set()):
+                stroke = "#FF4D4F"
+            elif shape.id in circuit_state.get("glowing_shape_ids", set()):
+                stroke = "#FFE66D"
+                self._draw_glow(shape, zoom, pan, tags)
         if not is_circuit:
             fill = shape.style.fill or ""
             self.canvas.create_polygon(
                 *self._flat(outline, zoom, pan),
                 fill=fill,
-                outline=shape.style.stroke,
+                outline=stroke,
                 width=stroke_width,
                 dash=self._dash(shape.style.dash),
                 smooth=shape.kind in {"terminal", "circle", "ellipse", "org_box", "cloud"},
@@ -208,14 +219,44 @@ class CanvasRenderer:
             self.canvas.create_line(
                 *self._screen(a[0], a[1], zoom, pan),
                 *self._screen(b[0], b[1], zoom, pan),
-                fill=shape.style.stroke,
+                fill=stroke,
                 width=stroke_width,
                 tags=tags,
             )
         if shape.kind in {"database", "voltage_source"}:
-            self._draw_special_ellipses(shape, zoom, pan, tags, stroke_width)
+            self._draw_special_ellipses(shape, zoom, pan, tags, stroke_width, stroke)
+        if circuit_state is not None and shape.id in circuit_state.get("closed_switch_ids", set()):
+            self._draw_closed_switch_overlay(shape, zoom, pan, tags)
+        if circuit_state is not None and shape.id in circuit_state.get("open_switch_ids", set()):
+            self._draw_open_switch_gap(shape, zoom, pan, tags)
         if shape.text:
             self._draw_flowchart_text(shape, zoom, pan, tags)
+
+    def _draw_glow(self, shape: FlowchartShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...]) -> None:
+        x1, y1, x2, y2 = shape.bounds()
+        sx1, sy1 = self._screen(x1 - 20, y1 - 18, zoom, pan)
+        sx2, sy2 = self._screen(x2 + 20, y2 + 18, zoom, pan)
+        self.canvas.create_oval(
+            sx1, sy1, sx2, sy2,
+            fill="#FFE66D",
+            outline="#FFF3A3",
+            stipple="gray25",
+            tags=tags + ("circuit_glow",),
+        )
+
+    def _draw_closed_switch_overlay(self, shape: FlowchartShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...]) -> None:
+        x, y, w, h = shape.x, shape.y, shape.width, shape.height
+        cy = y + h / 2
+        a = self._screen(x + w * 0.2, cy, zoom, pan)
+        b = self._screen(x + w * 0.8, cy, zoom, pan)
+        self.canvas.create_line(*a, *b, fill="#5BFFCF", width=max(3, self._stroke_width(4, zoom)), tags=tags + ("circuit_switch",))
+
+    def _draw_open_switch_gap(self, shape: FlowchartShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...]) -> None:
+        x, y, w, h = shape.x, shape.y, shape.width, shape.height
+        cy = y + h / 2
+        sx, sy = self._screen(x + w * 0.8, cy, zoom, pan)
+        r = max(4, round(5 * zoom))
+        self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, outline="#FF4D4F", width=2, tags=tags + ("circuit_switch",))
 
     def _draw_special_ellipses(
         self,
@@ -224,18 +265,20 @@ class CanvasRenderer:
         pan: tuple[float, float],
         tags: tuple[str, ...],
         stroke_width: int,
+        stroke: str | None = None,
     ) -> None:
+        stroke = stroke or shape.style.stroke
         x1, y1, x2, y2 = shape.bounds()
         cx = (x1 + x2) / 2
         if shape.kind == "database":
             rx = (x2 - x1) / 2
             ry = max(4, (y2 - y1) * 0.14)
             for cy in (y1 + ry, y2 - ry):
-                self._create_oval_world(cx - rx, cy - ry, cx + rx, cy + ry, shape.style.stroke, "", stroke_width, zoom, pan, tags)
+                self._create_oval_world(cx - rx, cy - ry, cx + rx, cy + ry, stroke, "", stroke_width, zoom, pan, tags)
         elif shape.kind == "voltage_source":
             cy = (y1 + y2) / 2
             r = min(x2 - x1, y2 - y1) * 0.35
-            self._create_oval_world(cx - r, cy - r, cx + r, cy + r, shape.style.stroke, "", stroke_width, zoom, pan, tags)
+            self._create_oval_world(cx - r, cy - r, cx + r, cy + r, stroke, "", stroke_width, zoom, pan, tags)
 
     def _draw_flowchart_text(
         self,
@@ -360,6 +403,8 @@ class CanvasRenderer:
         pan: tuple[float, float],
         flow_color: str,
         animation_phase: int | None,
+        *,
+        energized: bool = False,
     ) -> None:
         points = document.connector_points(connector)
         if len(points) < 2:
@@ -370,8 +415,8 @@ class CanvasRenderer:
         options = self._arrow_options(connector)
         self.canvas.create_line(
             *flat,
-            fill=connector.style.stroke,
-            width=self._stroke_width(connector.style.stroke_width, zoom),
+            fill=flow_color if energized else connector.style.stroke,
+            width=self._stroke_width(connector.style.stroke_width + (1 if energized else 0), zoom),
             dash=self._dash(connector.style.dash),
             smooth=smooth,
             tags=tags,
