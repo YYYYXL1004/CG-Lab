@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 import base64
 import tkinter as tk
@@ -48,10 +49,29 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "select": ToolSpec("选择", "V", "拖拽移动选中图形，或框选多个图形"),
     "line": ToolSpec("直线", "L", "拖拽绘制一条直线"),
     "curve": ToolSpec("画笔", "C", "按住并拖拽绘制平滑曲线"),
+    "eraser": ToolSpec("橡皮", "E", "拖拽经过图形、曲线或连接线即可擦除"),
     "text": ToolSpec("文本", "T", "点击画布添加文本，双击已有文本可编辑"),
     "connector": ToolSpec("连接", "K", "从一个图形拖拽到另一个图形以创建连接线"),
     "region_export": ToolSpec("区域导出", "", "拖拽选择要导出的画布区域"),
 }
+
+# 工具图标与左侧工具栏分组：UI 展示用，逻辑仍以 TOOL_SPECS 为准
+TOOL_ICONS: dict[str, str] = {
+    "select": "▣",
+    "line": "╱",
+    "curve": "✎",
+    "eraser": "⌫",
+    "text": "T",
+    "connector": "⤢",
+    "region_export": "⛶",
+}
+
+TOOL_GROUPS: list[tuple[str, list[str]]] = [
+    ("选择", ["select"]),
+    ("绘制", ["line", "curve", "eraser", "text"]),
+    ("连接", ["connector"]),
+    ("导出", ["region_export"]),
+]
 
 
 REQUIRED_THEME_TOKENS: set[str] = {
@@ -91,6 +111,42 @@ REQUIRED_THEME_TOKENS: set[str] = {
 
 def missing_theme_tokens(theme: dict[str, str]) -> list[str]:
     return sorted(REQUIRED_THEME_TOKENS.difference(theme.keys()))
+
+
+def split_polyline_by_circle(
+    points: list[tuple[float, float]],
+    cx: float,
+    cy: float,
+    radius: float,
+) -> list[list[tuple[float, float]]]:
+    """把折线在落入擦除圆内的顶点处断开，返回保留下来的若干段。"""
+    r2 = radius * radius
+    runs: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    for x, y in points:
+        if (x - cx) ** 2 + (y - cy) ** 2 <= r2:
+            if current:
+                runs.append(current)
+                current = []
+        else:
+            current.append((x, y))
+    if current:
+        runs.append(current)
+    return runs
+
+
+def densify_polyline(points: list[tuple[float, float]], max_spacing: float) -> list[tuple[float, float]]:
+    """在相邻顶点间插值，使任意相邻点间距不超过 max_spacing。"""
+    if len(points) < 2 or max_spacing <= 0:
+        return list(points)
+    result: list[tuple[float, float]] = [points[0]]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        dist = math.hypot(x1 - x0, y1 - y0)
+        steps = max(1, int(dist // max_spacing))
+        for i in range(1, steps + 1):
+            t = i / steps
+            result.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
+    return result
 
 
 def tool_hint(tool: str) -> str:
@@ -249,6 +305,8 @@ def _parse_metadata_text(text: str) -> dict[str, str]:
 def inspector_context_for(document: Document, selected_ids: set[str], current_tool: str) -> str:
     if current_tool == "curve" and not selected_ids:
         return "pen"
+    if current_tool == "eraser" and not selected_ids:
+        return "eraser_tool"
     if current_tool == "connector" and not selected_ids:
         return "connector_tool"
     selected = _selected_shapes(document, selected_ids)
@@ -434,6 +492,9 @@ class VectorFlowApp(tk.Tk):
         self._space_pan_start: tuple[int, int] | None = None
         self._space_pan_origin: tuple[float, float] | None = None
         self._freehand_points: list[tuple[float, float]] = []
+        self.eraser_radius = tk.DoubleVar(value=10.0)
+        self.eraser_mode = tk.StringVar(value="whole")  # whole=整体擦除, partial=部分擦除
+        self._eraser_dirty = False
         self._connector_animation_phase: int = 0
         self._connector_animation_after_id: str | None = None
         self._pending_redraw_after_id: str | None = None
@@ -600,7 +661,7 @@ class VectorFlowApp(tk.Tk):
     def _build_command_bar(self) -> None:
         shell = ttk.Frame(self, style="Panel.TFrame")
         shell.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 3))
-        canvas = tk.Canvas(shell, height=42, bg=self._theme()["panel_bg"], highlightthickness=0)
+        canvas = tk.Canvas(shell, height=58, bg=self._theme()["panel_bg"], highlightthickness=0)
         scrollbar = ttk.Scrollbar(shell, orient=tk.HORIZONTAL, command=canvas.xview)
         canvas.configure(xscrollcommand=scrollbar.set)
         canvas.pack(side=tk.TOP, fill=tk.X, expand=True)
@@ -629,34 +690,58 @@ class VectorFlowApp(tk.Tk):
         canvas.bind("<Button-4>", _on_mousewheel)
         canvas.bind("<Button-5>", _on_mousewheel)
 
-        ttk.Button(bar, text="新建", style="Tool.TButton", command=self.new_document).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="打开", style="Tool.TButton", command=self.open_document).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="导入照片", style="Tool.TButton", command=self.import_bitmap_photo).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="SQL -> ER", style="Accent.TButton", command=self.open_sql_er_dialog).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="保存", style="Accent.TButton", command=self.save_document).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="导出 PNG", style="Tool.TButton", command=self.export_png).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
+        def _group(title: str) -> ttk.Frame:
+            section = ttk.Frame(bar, style="Panel.TFrame")
+            section.pack(side=tk.LEFT, padx=(8, 0), pady=2, fill=tk.Y)
+            ttk.Label(section, text=title, style="Group.TLabel").pack(side=tk.TOP, anchor=tk.W, padx=2)
+            row = ttk.Frame(section, style="Panel.TFrame")
+            row.pack(side=tk.TOP, fill=tk.X)
+            return row
 
-        self.undo_btn = ttk.Button(bar, text="撤销", style="Tool.TButton", command=self.undo)
-        self.undo_btn.pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="复制", style="Tool.TButton", command=self.copy_selection).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="粘贴", style="Tool.TButton", command=self.paste_selection).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="算法回放", style="Tool.TButton", command=self.play_algorithm_replay).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, textvariable=self.physics_btn_label, style="Accent.TButton", command=self.toggle_physics).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, text="清屏", style="Danger.TButton", command=self.clear_canvas).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
+        def _divider() -> None:
+            ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=6)
 
-        ttk.Button(bar, text="电路秀", style="Tool.TButton", command=self.load_circuit_template).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, textvariable=self.circuit_power_label, style="Accent.TButton", command=self.toggle_circuit_power).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, textvariable=self.circuit_switch_label, style="Tool.TButton", command=self.toggle_circuit_switch).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Button(bar, textvariable=self.circuit_fault_label, style="Danger.TButton", command=self.toggle_circuit_fault).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=5)
+        def _btn(parent, text=None, *, command, style="Tool.TButton", textvariable=None) -> ttk.Button:
+            kwargs = {"style": style, "command": command}
+            if textvariable is not None:
+                kwargs["textvariable"] = textvariable
+            else:
+                kwargs["text"] = text
+            button = ttk.Button(parent, **kwargs)
+            button.pack(side=tk.LEFT, padx=2, pady=(0, 2))
+            return button
 
-        ttk.Button(bar, textvariable=self.theme_btn_label, style="Tool.TButton", command=self.toggle_theme).pack(side=tk.LEFT, padx=2, pady=4)
-        ttk.Checkbutton(bar, text="网格", variable=self.show_grid, command=self.redraw).pack(side=tk.LEFT, padx=6, pady=4)
-        ttk.Checkbutton(bar, text="流动线", variable=self.animate_connectors,
-                        command=self._on_connector_animation_toggle).pack(side=tk.LEFT, padx=6, pady=4)
-        ttk.Button(bar, text="100%", style="Tool.TButton", command=self.reset_view).pack(side=tk.LEFT, padx=2, pady=4)
+        file_group = _group("文件")
+        _btn(file_group, "新建", command=self.new_document)
+        _btn(file_group, "打开", command=self.open_document)
+        _btn(file_group, "保存", command=self.save_document, style="Accent.TButton")
+        _btn(file_group, "导入照片", command=self.import_bitmap_photo)
+        _btn(file_group, "导出 PNG", command=self.export_png)
+        _btn(file_group, "SQL -> ER", command=self.open_sql_er_dialog, style="Accent.TButton")
+        _divider()
+
+        edit_group = _group("编辑")
+        self.undo_btn = _btn(edit_group, "撤销", command=self.undo)
+        _btn(edit_group, "复制", command=self.copy_selection)
+        _btn(edit_group, "粘贴", command=self.paste_selection)
+        _btn(edit_group, "清屏", command=self.clear_canvas, style="Danger.TButton")
+        _divider()
+
+        demo_group = _group("演示")
+        _btn(demo_group, "算法回放", command=self.play_algorithm_replay)
+        _btn(demo_group, textvariable=self.physics_btn_label, command=self.toggle_physics, style="Accent.TButton")
+        _btn(demo_group, "电路秀", command=self.load_circuit_template)
+        _btn(demo_group, textvariable=self.circuit_power_label, command=self.toggle_circuit_power, style="Accent.TButton")
+        _btn(demo_group, textvariable=self.circuit_switch_label, command=self.toggle_circuit_switch)
+        _btn(demo_group, textvariable=self.circuit_fault_label, command=self.toggle_circuit_fault, style="Danger.TButton")
+        _divider()
+
+        view_group = _group("视图")
+        _btn(view_group, textvariable=self.theme_btn_label, command=self.toggle_theme)
+        _btn(view_group, "100%", command=self.reset_view)
+        ttk.Checkbutton(view_group, text="网格", variable=self.show_grid, command=self.redraw).pack(side=tk.LEFT, padx=6, pady=(0, 2))
+        ttk.Checkbutton(view_group, text="流动线", variable=self.animate_connectors,
+                        command=self._on_connector_animation_toggle).pack(side=tk.LEFT, padx=6, pady=(0, 2))
 
         bind_mousewheel_tree(bar, _on_mousewheel)
 
@@ -688,18 +773,26 @@ class VectorFlowApp(tk.Tk):
         self._build_shape_library(lib_container)
 
     def _build_tool_rail(self, parent: tk.Widget) -> None:
-        self._tool_rail_width = 76
+        self._tool_rail_width = 96
         rail = ttk.Frame(parent, style="Panel.TFrame", width=self._tool_rail_width)
         rail.pack(side=tk.LEFT, fill=tk.Y)
         rail.pack_propagate(False)
-        for tool, spec in TOOL_SPECS.items():
-            label = spec.label if not spec.shortcut else f"{spec.label}\n{spec.shortcut}"
-            command = self._on_curve_button if tool == "curve" else (lambda t=tool: self.set_tool(t))
-            button = ttk.Button(rail, text=label, style="Tool.TButton", command=command)
-            button.pack(fill=tk.X, padx=6, pady=4)
-            self._tool_buttons[tool] = button
-            if tool == "curve":
-                self.curve_btn = button
+        for group_index, (group_title, tools) in enumerate(TOOL_GROUPS):
+            if group_index > 0:
+                ttk.Separator(rail, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=8, pady=(6, 0))
+            ttk.Label(rail, text=group_title, style="Group.TLabel").pack(anchor=tk.W, padx=10, pady=(6, 2))
+            for tool in tools:
+                spec = TOOL_SPECS[tool]
+                icon = TOOL_ICONS.get(tool, "")
+                label = f"{icon}  {spec.label}".strip()
+                if spec.shortcut:
+                    label = f"{label}  {spec.shortcut}"
+                command = self._on_curve_button if tool == "curve" else (lambda t=tool: self.set_tool(t))
+                button = ttk.Button(rail, text=label, style="Tool.TButton", command=command)
+                button.pack(fill=tk.X, padx=6, pady=2)
+                self._tool_buttons[tool] = button
+                if tool == "curve":
+                    self.curve_btn = button
 
         th = self._theme()
         sash = tk.Frame(parent, width=5, bg=th["separator"], cursor="sb_h_double_arrow")
@@ -904,7 +997,7 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-v>", lambda _e: self.paste_selection())
         self.bind("<Delete>", lambda _e: self.delete_selection())
         self.bind("<Escape>", lambda _e: self.clear_selection())
-        for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("t", "text"), ("k", "connector")]:
+        for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("e", "eraser"), ("t", "text"), ("k", "connector")]:
             self.bind(key, lambda _e, t=tool: self.set_tool(t))
         self.bind("<KeyPress-space>", self.on_space_down)
         self.bind("<KeyRelease-space>", self.on_space_up)
@@ -1025,6 +1118,8 @@ class VectorFlowApp(tk.Tk):
             child.destroy()
         if context == "pen":
             self._build_pen_inspector(frame)
+        elif context == "eraser_tool":
+            self._build_eraser_inspector(frame)
         elif context == "connector_tool":
             self._build_connector_inspector(frame)
         elif context == "text_shape":
@@ -1093,6 +1188,23 @@ class VectorFlowApp(tk.Tk):
         self._inspector_label(parent, "平滑度")
         ttk.Scale(parent, from_=1, to=5, variable=self.pen_smoothness,
                   orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=3)
+
+    def _build_eraser_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "橡皮擦", "拖拽经过对象即可擦除")
+        self._inspector_label(parent, "擦除模式")
+        ttk.Radiobutton(parent, text="整体擦除（移除整个对象）",
+                        variable=self.eraser_mode, value="whole").pack(anchor=tk.W, padx=12, pady=2)
+        ttk.Radiobutton(parent, text="部分擦除（仅断开经过的笔画）",
+                        variable=self.eraser_mode, value="partial").pack(anchor=tk.W, padx=12, pady=2)
+        self._inspector_label(parent, "判定半径")
+        ttk.Scale(parent, from_=4, to=30, variable=self.eraser_radius,
+                  orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=3)
+        ttk.Label(parent, text="整体：图形 / 画笔曲线 / 连接线",
+                  style="Group.TLabel", wraplength=200).pack(anchor=tk.W, padx=12, pady=(6, 2))
+        ttk.Label(parent, text="部分：仅作用于画笔曲线与直线，其余仍整体擦除",
+                  style="Group.TLabel", wraplength=200).pack(anchor=tk.W, padx=12, pady=2)
+        ttk.Label(parent, text="擦除后可用 Ctrl+Z 撤销",
+                  style="Group.TLabel", wraplength=200).pack(anchor=tk.W, padx=12, pady=2)
 
     def _build_connector_inspector(self, parent: tk.Widget) -> None:
         self._inspector_title(parent, "连接线", "设置新连接线样式")
@@ -1184,6 +1296,8 @@ class VectorFlowApp(tk.Tk):
         # 切到非曲线工具时自动收起画笔属性面板
         if tool != "curve":
             self._close_pen_panel()
+        if tool != "eraser":
+            self.canvas.delete("eraser_cursor")
         self._update_tool_button_states()
         self._rebuild_inspector()
         self._update_status()
@@ -1599,6 +1713,7 @@ class VectorFlowApp(tk.Tk):
             self.request_redraw(draft=True)
             return
         x, y = self.screen_to_world(event.x, event.y)
+        self._update_eraser_cursor(event.x, event.y)
         self.status_text.set(" | ".join(format_status_parts(
             tool=self.current_tool.get(),
             zoom=self.zoom,
@@ -1608,6 +1723,16 @@ class VectorFlowApp(tk.Tk):
             hint=self._status_hint or tool_hint(self.current_tool.get()),
             can_undo=self.history.can_undo,
         )))
+
+    def _update_eraser_cursor(self, sx: int, sy: int) -> None:
+        self.canvas.delete("eraser_cursor")
+        if self.current_tool.get() != "eraser":
+            return
+        r = self.eraser_radius.get()
+        self.canvas.create_oval(
+            sx - r, sy - r, sx + r, sy + r,
+            outline=self._theme()["selection"], dash=(3, 2), tags="eraser_cursor",
+        )
 
     def on_left_down(self, event) -> None:
         if self.physics_running:
@@ -1665,8 +1790,8 @@ class VectorFlowApp(tk.Tk):
             self.redraw()
 
         elif tool == "flow":
-            self.place_flow_shape(*self.drag_start)
-            self._push_history()
+            self.drag_mode = "flow_draw"
+            self._status_hint = "拖拽确定大小，或单击以默认大小放置"
 
         elif tool == "text":
             self._open_inline_editor(self.drag_start[0], self.drag_start[1])
@@ -1691,6 +1816,55 @@ class VectorFlowApp(tk.Tk):
         elif tool == "curve":
             self._freehand_points = [self.drag_start]
             self.drag_mode = "curve_trace"
+
+        elif tool == "eraser":
+            self.drag_mode = "erase"
+            self._eraser_dirty = False
+            self._erase_at(*self.drag_start)
+
+    def _erase_at(self, wx: float, wy: float) -> bool:
+        """擦除光标处的对象，返回是否有删除发生。
+
+        部分擦除模式下，画笔曲线和直线只移除擦除圆经过的片段并保留其余部分；
+        其它图形以及连接线仍整体擦除。
+        """
+        radius = self.eraser_radius.get() / self.zoom
+        shape = self.document.shape_at(wx, wy)
+        if shape is not None:
+            if self.eraser_mode.get() == "partial" and isinstance(shape, (CurveShape, LineShape)):
+                return self._partial_erase_shape(shape, wx, wy, radius)
+            self.document.delete_shapes([shape.id])
+            self.selected_ids.discard(shape.id)
+            self._eraser_dirty = True
+            self.request_redraw(draft=True)
+            return True
+        connector = self.document.connector_at(wx, wy, tolerance=radius)
+        if connector is not None:
+            self.document.delete_shapes([connector.id])
+            self.selected_ids.discard(connector.id)
+            self._eraser_dirty = True
+            self.request_redraw(draft=True)
+            return True
+        return False
+
+    def _partial_erase_shape(self, shape, wx: float, wy: float, radius: float) -> bool:
+        """从曲线/直线上移除擦除圆覆盖的片段，剩余片段保留为新的曲线。"""
+        if isinstance(shape, LineShape):
+            base_points = [(shape.x1, shape.y1), (shape.x2, shape.y2)]
+        else:
+            base_points = list(shape.points)
+        dense = densify_polyline(base_points, max(1.0, radius / 2))
+        runs = split_polyline_by_circle(dense, wx, wy, radius)
+        kept = [run for run in runs if len(run) >= 2]
+        if len(kept) == 1 and len(kept[0]) == len(dense):
+            return False  # 没碰到，无变化
+        self.document.delete_shapes([shape.id])
+        self.selected_ids.discard(shape.id)
+        for run in kept:
+            self.document.add_shape(CurveShape(points=run, style=copy.deepcopy(shape.style)))
+        self._eraser_dirty = True
+        self.request_redraw(draft=True)
+        return True
 
     def on_left_drag(self, event) -> None:
         if self.physics_running or self.drag_start is None:
@@ -1739,6 +1913,13 @@ class VectorFlowApp(tk.Tk):
             x0, y0 = self.world_to_screen(self.drag_start)
             x1, y1 = event.x, event.y
             self.canvas.create_line(x0, y0, x1, y1, fill="#A7C7FF", dash=(6, 3), width=2, arrow=tk.LAST, tags="preview")
+        elif tool == "flow" and self.drag_mode == "flow_draw":
+            self.canvas.delete("preview")
+            x0, y0 = self.world_to_screen(self.drag_start)
+            x1, y1 = self.world_to_screen(current)
+            self.canvas.create_rectangle(x0, y0, x1, y1, outline="#5BA8FF", dash=(5, 3), width=2, tags="preview")
+        elif tool == "eraser" and self.drag_mode == "erase":
+            self._erase_at(*current)
         elif tool in {"line", "region_export", "curve"}:
             if tool == "curve":
                 last = self._freehand_points[-1] if self._freehand_points else self.drag_start
@@ -1792,6 +1973,25 @@ class VectorFlowApp(tk.Tk):
                 self.document.add_shape(CurveShape(points=pts, style=style))
                 self._push_history()
                 self._status_hint = f"画笔轨迹已创建（{len(pts)} 个采样点）"
+                self.redraw()
+        elif tool == "flow" and self.drag_mode == "flow_draw":
+            self.canvas.delete("preview")
+            dx = abs(current[0] - self.drag_start[0])
+            dy = abs(current[1] - self.drag_start[1])
+            sized = dx >= 5 and dy >= 5
+            if sized:
+                self.place_flow_shape_bounds(self.drag_start[0], self.drag_start[1], current[0], current[1])
+            else:
+                self.place_flow_shape(*self.drag_start)
+            self._push_history()
+            self.set_tool("select")
+            self._status_hint = "已按拖拽大小放置图形" if sized else "已以默认大小放置图形"
+            self._update_status()
+        elif tool == "eraser":
+            if self._eraser_dirty:
+                self._eraser_dirty = False
+                self._push_history()
+                self._status_hint = "已擦除"
                 self.redraw()
         elif tool == "region_export":
             self.canvas.delete("preview")
@@ -1902,37 +2102,49 @@ class VectorFlowApp(tk.Tk):
 
     # ── Shape creation ──────────────────────────────────────────────
 
+    FLOW_DEFAULT_DIMS: dict[str, tuple[int, int]] = {
+        "decision": (140, 100), "terminal": (150, 70), "database": (150, 90),
+        "document": (160, 90), "data": (160, 70),
+        # General shapes
+        "circle": (100, 100), "ellipse": (140, 90), "star5": (100, 100),
+        "hexagon": (110, 100), "arrow_right": (140, 80),
+        "arrow_left": (140, 80),
+        "triangle": (110, 100), "trapezoid": (140, 90),
+        "parallelogram": (150, 80), "plus": (100, 100),
+        # Org chart
+        "org_box": (160, 70),
+        # Circuit symbols (bbox includes short leads on each side)
+        "resistor": (100, 40), "capacitor": (60, 60), "ground": (70, 60),
+        "battery": (70, 50), "switch": (90, 40), "led": (110, 60),
+        "inductor": (120, 50), "voltage_source": (80, 80),
+    }
+    FLOW_LABELS: dict[str, str] = {
+        "process": "处理", "decision": "判断", "terminal": "开始/结束",
+        "data": "数据", "document": "文档", "database": "数据库", "subprocess": "子程序",
+        "circle": "", "ellipse": "", "star5": "", "hexagon": "", "arrow_right": "",
+        "arrow_left": "",
+        "triangle": "", "trapezoid": "", "parallelogram": "", "plus": "",
+        "org_box": "",
+        "resistor": "R", "capacitor": "C", "ground": "", "battery": "",
+        "switch": "", "led": "", "inductor": "L", "voltage_source": "V",
+    }
+
+    def flow_default_dims(self, kind: str | None = None) -> tuple[int, int]:
+        return self.FLOW_DEFAULT_DIMS.get(kind or self.pending_flow_kind, (160, 70))
+
     def place_flow_shape(self, x: float, y: float) -> None:
-        dims = {
-            "decision": (140, 100), "terminal": (150, 70), "database": (150, 90),
-            "document": (160, 90), "data": (160, 70),
-            # General shapes
-            "circle": (100, 100), "ellipse": (140, 90), "star5": (100, 100),
-            "hexagon": (110, 100), "arrow_right": (140, 80),
-            "arrow_left": (140, 80),
-            "triangle": (110, 100), "trapezoid": (140, 90),
-            "parallelogram": (150, 80), "plus": (100, 100),
-            # Org chart
-            "org_box": (160, 70),
-            # Circuit symbols (bbox includes short leads on each side)
-            "resistor": (100, 40), "capacitor": (60, 60), "ground": (70, 60),
-            "battery": (70, 50), "switch": (90, 40), "led": (110, 60),
-            "inductor": (120, 50), "voltage_source": (80, 80),
-        }
-        labels = {
-            "process": "处理", "decision": "判断", "terminal": "开始/结束",
-            "data": "数据", "document": "文档", "database": "数据库", "subprocess": "子程序",
-            "circle": "", "ellipse": "", "star5": "", "hexagon": "", "arrow_right": "",
-            "arrow_left": "",
-            "triangle": "", "trapezoid": "", "parallelogram": "", "plus": "",
-            "org_box": "",
-            "resistor": "R", "capacitor": "C", "ground": "", "battery": "",
-            "switch": "", "led": "", "inductor": "L", "voltage_source": "V",
-        }
-        w, h = dims.get(self.pending_flow_kind, (160, 70))
+        w, h = self.flow_default_dims()
+        self._create_flow_shape(x - w / 2, y - h / 2, w, h)
+
+    def place_flow_shape_bounds(self, x0: float, y0: float, x1: float, y1: float) -> None:
+        left, right = min(x0, x1), max(x0, x1)
+        top, bottom = min(y0, y1), max(y0, y1)
+        self._create_flow_shape(left, top, right - left, bottom - top)
+
+    def _create_flow_shape(self, x: float, y: float, w: float, h: float) -> None:
         shape = FlowchartShape(
-            self.pending_flow_kind, x - w / 2, y - h / 2, w, h,
-            labels.get(self.pending_flow_kind, "图元"),
+            self.pending_flow_kind, x, y, w, h,
+            self.FLOW_LABELS.get(self.pending_flow_kind, "图元"),
             ShapeStyle(stroke=self.stroke_color.get(), fill=self.fill_color.get(), stroke_width=self.stroke_width.get()),
         )
         self.document.add_shape(shape)
