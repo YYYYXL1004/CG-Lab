@@ -37,6 +37,8 @@ class Document:
 
     def shape_at(self, x: float, y: float) -> Shape | None:
         for shape in sorted(self.shapes, key=lambda item: item.z_order, reverse=True):
+            if not getattr(shape, "visible", True) or getattr(shape, "locked", False):
+                continue
             if shape.hit_test(x, y):
                 return shape
         return None
@@ -65,8 +67,85 @@ class Document:
     def move_shapes(self, shape_ids: list[str], dx: float, dy: float) -> None:
         selected = set(shape_ids)
         for shape in self.shapes:
-            if shape.id in selected:
+            if shape.id in selected and not getattr(shape, "locked", False):
                 shape.move(dx, dy)
+
+    # ── 图层 / z-order ───────────────────────────────────────────────
+    def _renormalize_z(self) -> None:
+        """按 self.shapes 当前顺序（底->顶）赋连续 z_order 0..N-1，消除重复与空洞。
+
+        调用方负责先把 self.shapes 排成期望的叠放顺序。
+        """
+        for index, shape in enumerate(self.shapes):
+            shape.z_order = index
+        self._rebuild_shape_index()
+
+    def bring_to_front(self, shape_ids: set[str] | list[str]) -> bool:
+        selected = set(shape_ids)
+        ordered = sorted(self.shapes, key=lambda item: item.z_order)
+        keep = [s for s in ordered if s.id not in selected]
+        move = [s for s in ordered if s.id in selected]
+        new_order = keep + move
+        if not move or ordered == new_order:
+            return False
+        self.shapes = new_order
+        self._renormalize_z()
+        return True
+
+    def send_to_back(self, shape_ids: set[str] | list[str]) -> bool:
+        selected = set(shape_ids)
+        ordered = sorted(self.shapes, key=lambda item: item.z_order)
+        move = [s for s in ordered if s.id in selected]
+        keep = [s for s in ordered if s.id not in selected]
+        new_order = move + keep
+        if not move or ordered == new_order:
+            return False
+        self.shapes = new_order
+        self._renormalize_z()
+        return True
+
+    def raise_shapes(self, shape_ids: set[str] | list[str]) -> bool:
+        """选中图形整体上移一层（与上方相邻的未选中图形交换）。"""
+        selected = set(shape_ids)
+        ordered = sorted(self.shapes, key=lambda item: item.z_order)
+        changed = False
+        for i in range(len(ordered) - 2, -1, -1):
+            if ordered[i].id in selected and ordered[i + 1].id not in selected:
+                ordered[i], ordered[i + 1] = ordered[i + 1], ordered[i]
+                changed = True
+        if changed:
+            self.shapes = ordered
+            self._renormalize_z()
+        return changed
+
+    def lower_shapes(self, shape_ids: set[str] | list[str]) -> bool:
+        """选中图形整体下移一层（与下方相邻的未选中图形交换）。"""
+        selected = set(shape_ids)
+        ordered = sorted(self.shapes, key=lambda item: item.z_order)
+        changed = False
+        for i in range(1, len(ordered)):
+            if ordered[i].id in selected and ordered[i - 1].id not in selected:
+                ordered[i], ordered[i - 1] = ordered[i - 1], ordered[i]
+                changed = True
+        if changed:
+            self.shapes = ordered
+            self._renormalize_z()
+        return changed
+
+    def move_shape_to_index(self, shape_id: str, index: int) -> bool:
+        """把某图形移动到 z 排序列表中的指定下标（0=最底层）。"""
+        ordered = sorted(self.shapes, key=lambda item: item.z_order)
+        src = next((i for i, s in enumerate(ordered) if s.id == shape_id), None)
+        if src is None:
+            return False
+        index = max(0, min(index, len(ordered) - 1))
+        if index == src:
+            return False
+        shape = ordered.pop(src)
+        ordered.insert(index, shape)
+        self.shapes = ordered
+        self._renormalize_z()
+        return True
 
     def delete_shapes(self, shape_ids: list[str]) -> None:
         selected = set(shape_ids)

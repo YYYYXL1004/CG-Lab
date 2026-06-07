@@ -56,7 +56,10 @@ class CanvasRenderer:
         height = max(1, self.canvas.winfo_height())
         if show_grid:
             self._draw_grid(width, height, document.grid_size, zoom, pan, ch.get("grid", "#2A2A3E"))
+        hidden_ids = {s.id for s in document.shapes if not getattr(s, "visible", True)}
         for connector in document.connectors:
+            if connector.start_shape_id in hidden_ids or connector.end_shape_id in hidden_ids:
+                continue
             energized = circuit_state is not None and connector.id in circuit_state.get("energized_connector_ids", set())
             self._draw_connector(
                 document,
@@ -68,6 +71,8 @@ class CanvasRenderer:
                 energized=energized,
             )
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
+            if not getattr(shape, "visible", True):
+                continue
             self._draw_shape(shape, zoom, pan, draft=draft, circuit_state=circuit_state)
         if selected_ids:
             self._draw_selection_overlay(

@@ -15,7 +15,7 @@ from algorithms.bezier import catmull_rom_polyline
 from core.components import ComponentLibrary, build_group_from_selection
 from core.document import Document
 from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape
+from core.shapes import KIND_LABELS, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape, shape_display_name
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.canvas_renderer import CanvasRenderer
@@ -484,6 +484,9 @@ class VectorFlowApp(tk.Tk):
         self._status_hint: str | None = None
         self.component_library = ComponentLibrary(Path("assets/components/my_components.json"))
         self._component_inner: ttk.Frame | None = None
+        self._layers_inner: ttk.Frame | None = None
+        self._layers_panel_key: tuple | None = None
+        self._layers_rename_id: str | None = None
 
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
@@ -537,8 +540,6 @@ class VectorFlowApp(tk.Tk):
         self.theme_name = "light" if self.theme_name == "dark" else "dark"
         th = self._theme()
         self._configure_style()
-        if hasattr(self, "_command_canvas") and self._command_canvas.winfo_exists():
-            self._command_canvas.configure(bg=th["panel_bg"])
         self.canvas.configure(bg=th["canvas_bg"])
         if self._inspector_canvas is not None and self._inspector_canvas.winfo_exists():
             self._inspector_canvas.configure(bg=th["panel_bg"])
@@ -546,6 +547,8 @@ class VectorFlowApp(tk.Tk):
             self._sash.configure(bg=th["separator"])
         if hasattr(self, "_tool_sash") and self._tool_sash.winfo_exists():
             self._tool_sash.configure(bg=th["separator"])
+        if hasattr(self, "_layers_sash") and self._layers_sash.winfo_exists():
+            self._layers_sash.configure(bg=th["separator"])
         for cv in self._lib_canvases:
             try:
                 cv.configure(bg=th["panel_bg"])
@@ -597,6 +600,16 @@ class VectorFlowApp(tk.Tk):
         style.configure("TSeparator", background=th["separator"])
         style.configure("Group.TLabel", background=th["panel_bg"], foreground=th["caption"],
                         font=("Microsoft YaHei", 8))
+        # 图形库分页标签：紧凑内边距 + 小字体，避免窄侧栏里中文被裁切；选中页用强调色
+        style.configure("Library.TNotebook", background=th["panel_bg"], borderwidth=0)
+        style.configure("Library.TNotebook.Tab", padding=(7, 4), font=("Microsoft YaHei", 9),
+                        background=th["button_bg"], foreground=th["fg"], borderwidth=0)
+        style.map("Library.TNotebook.Tab",
+                  background=[("selected", th["accent_bg"]), ("active", th["button_hover"])],
+                  foreground=[("selected", th["accent_fg"]), ("active", th["fg_active"])])
+        # 图层面板选中行高亮
+        style.configure("LayerSel.TFrame", background=th["accent_bg"])
+        style.configure("LayerSel.TLabel", background=th["accent_bg"], foreground=th["accent_fg"])
         style.map("TButton",
                   background=[("active", th["button_hover"]), ("pressed", th["button_pressed"])],
                   foreground=[("active", th["fg_active"])])
@@ -637,6 +650,13 @@ class VectorFlowApp(tk.Tk):
         edit_menu.add_command(label="粘贴", accelerator="Ctrl+V", command=self.paste_selection)
         edit_menu.add_command(label="删除", accelerator="Delete", command=self.delete_selection)
         edit_menu.add_separator()
+        layer_menu = tk.Menu(edit_menu, tearoff=False)
+        layer_menu.add_command(label="置于顶层", accelerator="Ctrl+Shift+↑", command=self.bring_to_front)
+        layer_menu.add_command(label="上移一层", accelerator="Ctrl+↑", command=self.raise_layer)
+        layer_menu.add_command(label="下移一层", accelerator="Ctrl+↓", command=self.lower_layer)
+        layer_menu.add_command(label="置于底层", accelerator="Ctrl+Shift+↓", command=self.send_to_back)
+        edit_menu.add_cascade(label="层级", menu=layer_menu)
+        edit_menu.add_separator()
         edit_menu.add_command(label="水平翻转", command=self.flip_horizontal)
         edit_menu.add_command(label="垂直翻转", command=self.flip_vertical)
         menu.add_cascade(label="编辑", menu=edit_menu)
@@ -659,47 +679,22 @@ class VectorFlowApp(tk.Tk):
         self._rebuild_inspector()
 
     def _build_command_bar(self) -> None:
+        # 自适应换行工具条：按组排布，窗口越窄行数越多，绝不需要左右滚动。
         shell = ttk.Frame(self, style="Panel.TFrame")
         shell.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 3))
-        canvas = tk.Canvas(shell, height=58, bg=self._theme()["panel_bg"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(shell, orient=tk.HORIZONTAL, command=canvas.xview)
-        canvas.configure(xscrollcommand=scrollbar.set)
-        canvas.pack(side=tk.TOP, fill=tk.X, expand=True)
-        scrollbar.pack(side=tk.TOP, fill=tk.X)
-        self._command_canvas = canvas
+        bar = ttk.Frame(shell, style="Panel.TFrame")
+        bar.pack(side=tk.TOP, fill=tk.X)
+        self._command_bar = bar
 
-        bar = ttk.Frame(canvas, style="Panel.TFrame")
-        win_id = canvas.create_window((0, 0), window=bar, anchor=tk.NW)
-
-        def _on_bar_configure(_event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def _on_canvas_configure(event):
-            requested = max(bar.winfo_reqwidth(), event.width)
-            canvas.itemconfigure(win_id, width=requested)
-
-        def _on_mousewheel(event):
-            units = mousewheel_units(event)
-            if units:
-                canvas.xview_scroll(units, "units")
-            return "break"
-
-        bar.bind("<Configure>", _on_bar_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        canvas.bind("<Button-4>", _on_mousewheel)
-        canvas.bind("<Button-5>", _on_mousewheel)
+        groups: list[ttk.Frame] = []
 
         def _group(title: str) -> ttk.Frame:
             section = ttk.Frame(bar, style="Panel.TFrame")
-            section.pack(side=tk.LEFT, padx=(8, 0), pady=2, fill=tk.Y)
             ttk.Label(section, text=title, style="Group.TLabel").pack(side=tk.TOP, anchor=tk.W, padx=2)
             row = ttk.Frame(section, style="Panel.TFrame")
             row.pack(side=tk.TOP, fill=tk.X)
+            groups.append(section)
             return row
-
-        def _divider() -> None:
-            ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=6)
 
         def _btn(parent, text=None, *, command, style="Tool.TButton", textvariable=None) -> ttk.Button:
             kwargs = {"style": style, "command": command}
@@ -711,21 +706,13 @@ class VectorFlowApp(tk.Tk):
             button.pack(side=tk.LEFT, padx=2, pady=(0, 2))
             return button
 
-        file_group = _group("文件")
-        _btn(file_group, "新建", command=self.new_document)
-        _btn(file_group, "打开", command=self.open_document)
-        _btn(file_group, "保存", command=self.save_document, style="Accent.TButton")
-        _btn(file_group, "导入照片", command=self.import_bitmap_photo)
-        _btn(file_group, "导出 PNG", command=self.export_png)
-        _btn(file_group, "SQL -> ER", command=self.open_sql_er_dialog, style="Accent.TButton")
-        _divider()
-
+        # 文件/复制粘贴等常规操作都在顶部菜单里，这里只留高频与演示向的功能。
         edit_group = _group("编辑")
         self.undo_btn = _btn(edit_group, "撤销", command=self.undo)
-        _btn(edit_group, "复制", command=self.copy_selection)
-        _btn(edit_group, "粘贴", command=self.paste_selection)
         _btn(edit_group, "清屏", command=self.clear_canvas, style="Danger.TButton")
-        _divider()
+
+        chart_group = _group("图表")
+        _btn(chart_group, "SQL -> ER", command=self.open_sql_er_dialog, style="Accent.TButton")
 
         demo_group = _group("演示")
         _btn(demo_group, "算法回放", command=self.play_algorithm_replay)
@@ -734,7 +721,6 @@ class VectorFlowApp(tk.Tk):
         _btn(demo_group, textvariable=self.circuit_power_label, command=self.toggle_circuit_power, style="Accent.TButton")
         _btn(demo_group, textvariable=self.circuit_switch_label, command=self.toggle_circuit_switch)
         _btn(demo_group, textvariable=self.circuit_fault_label, command=self.toggle_circuit_fault, style="Danger.TButton")
-        _divider()
 
         view_group = _group("视图")
         _btn(view_group, textvariable=self.theme_btn_label, command=self.toggle_theme)
@@ -743,11 +729,36 @@ class VectorFlowApp(tk.Tk):
         ttk.Checkbutton(view_group, text="流动线", variable=self.animate_connectors,
                         command=self._on_connector_animation_toggle).pack(side=tk.LEFT, padx=6, pady=(0, 2))
 
-        bind_mousewheel_tree(bar, _on_mousewheel)
+        gap = 14
+
+        def _reflow(width: int) -> None:
+            avail = max(int(width), 1)
+            x = row_index = col_index = 0
+            for section in groups:
+                need = section.winfo_reqwidth() + gap
+                if col_index > 0 and x + need > avail:
+                    row_index += 1
+                    col_index = 0
+                    x = 0
+                section.grid(row=row_index, column=col_index, sticky="nw",
+                             padx=(0, gap), pady=(2, 4))
+                x += need
+                col_index += 1
+
+        self._command_bar_width = 0
+
+        def _on_shell_configure(event):
+            if event.width == self._command_bar_width:
+                return
+            self._command_bar_width = event.width
+            _reflow(event.width)
+
+        shell.bind("<Configure>", _on_shell_configure)
+        self.after_idle(lambda: _reflow(shell.winfo_width()))
 
     def _build_left_panel(self, parent: tk.Widget) -> None:
         self._build_tool_rail(parent)
-        self._sidebar_width = 180
+        self._sidebar_width = 200
         lib_container = ttk.Frame(parent, style="Panel.TFrame", width=self._sidebar_width)
         lib_container.pack(side=tk.LEFT, fill=tk.Y)
         lib_container.pack_propagate(False)
@@ -770,7 +781,34 @@ class VectorFlowApp(tk.Tk):
         sash.bind("<Enter>", lambda e: sash.configure(bg=self._theme()["sash_hover"]))
         sash.bind("<Leave>", lambda e: sash.configure(bg=self._theme()["separator"]))
 
-        self._build_shape_library(lib_container)
+        # 左侧栏垂直分割：上=图形库 Notebook，下=图层面板，中间一条可拖拽水平 sash
+        self._layers_height = 220
+        layers_area = ttk.Frame(lib_container, style="Panel.TFrame", height=self._layers_height)
+        layers_area.pack(side=tk.BOTTOM, fill=tk.X)
+        layers_area.pack_propagate(False)
+
+        hsash = tk.Frame(lib_container, height=5, bg=th["separator"], cursor="sb_v_double_arrow")
+        hsash.pack(side=tk.BOTTOM, fill=tk.X)
+        self._layers_sash = hsash
+
+        library_area = ttk.Frame(lib_container, style="Panel.TFrame")
+        library_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        def _hsash_press(event):
+            hsash._drag_y = event.y_root
+            hsash._drag_h = layers_area.winfo_height()
+
+        def _hsash_drag(event):
+            delta = hsash._drag_y - event.y_root  # 向上拖 => 图层面板变高
+            layers_area.configure(height=clamp_drag_width(hsash._drag_h, delta, 120, 480))
+
+        hsash.bind("<ButtonPress-1>", _hsash_press)
+        hsash.bind("<B1-Motion>", _hsash_drag)
+        hsash.bind("<Enter>", lambda e: hsash.configure(bg=self._theme()["sash_hover"]))
+        hsash.bind("<Leave>", lambda e: hsash.configure(bg=self._theme()["separator"]))
+
+        self._build_shape_library(library_area)
+        self._build_layers_panel(layers_area)
 
     def _build_tool_rail(self, parent: tk.Widget) -> None:
         self._tool_rail_width = 96
@@ -813,7 +851,7 @@ class VectorFlowApp(tk.Tk):
         sash.bind("<Leave>", lambda _e: sash.configure(bg=self._theme()["separator"]))
 
     def _build_shape_library(self, lib_container: tk.Widget) -> None:
-        self.library = ttk.Notebook(lib_container)
+        self.library = ttk.Notebook(lib_container, style="Library.TNotebook")
         self.library.pack(fill=tk.BOTH, expand=True)
 
         def _lib_tab(title: str, items: list[tuple[str, str]], extras: list[tuple[str, "callable"]] | None = None) -> None:
@@ -860,27 +898,26 @@ class VectorFlowApp(tk.Tk):
             canvas_inner.bind("<Button-5>", _on_mousewheel)
             bind_mousewheel_tree(inner, _on_mousewheel)
 
-        _lib_tab("流程图", [
-            ("处理框", "process"), ("判断框", "decision"), ("起止框", "terminal"),
-            ("数据框", "data"), ("文档框", "document"), ("数据库", "database"), ("子程序", "subprocess"),
-        ])
-        _lib_tab("通用图形", [
-            ("圆形", "circle"), ("椭圆", "ellipse"), ("三角形", "triangle"),
-            ("梯形", "trapezoid"), ("平行四边形", "parallelogram"), ("圆角矩形", "org_box"),
-            ("五角星", "star5"), ("六边形", "hexagon"),
-            ("右箭头", "arrow_right"), ("左箭头", "arrow_left"), ("加号", "plus"),
-        ])
-        _lib_tab("电路图", [
-            ("电阻", "resistor"), ("电容", "capacitor"), ("接地", "ground"),
-            ("电池", "battery"), ("开关", "switch"), ("LED", "led"),
-            ("电感", "inductor"), ("电压源", "voltage_source"),
-        ], extras=[("📋 加载默认电路", self.load_circuit_template)])
+        def _items(kinds: list[str]) -> list[tuple[str, str]]:
+            return [(KIND_LABELS[k], k) for k in kinds]
+
+        _lib_tab("流程图", _items([
+            "process", "decision", "terminal", "data", "document", "database", "subprocess",
+        ]))
+        _lib_tab("图形", _items([
+            "circle", "ellipse", "triangle", "trapezoid", "parallelogram", "org_box",
+            "star5", "hexagon", "arrow_right", "arrow_left", "plus",
+        ]))
+        _lib_tab("电路图", _items([
+            "resistor", "capacitor", "ground", "battery", "switch", "led",
+            "inductor", "voltage_source",
+        ]), extras=[("📋 加载默认电路", self.load_circuit_template)])
 
         self._build_component_library_tab()
 
     def _build_component_library_tab(self) -> None:
         frame = ttk.Frame(self.library)
-        self.library.add(frame, text="我的组件")
+        self.library.add(frame, text="组件")
         canvas_inner = tk.Canvas(frame, bg=self._theme()["panel_bg"], highlightthickness=0)
         self._lib_canvases.append(canvas_inner)
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_inner.yview)
@@ -929,6 +966,153 @@ class VectorFlowApp(tk.Tk):
             btn = ttk.Button(row, text=template.name, command=lambda i=index: self.place_component_template_at_view_center(i))
             btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
             ttk.Button(row, text="删除", style="Danger.TButton", command=lambda i=index: self.delete_component_template(i)).pack(side=tk.RIGHT, padx=(4, 0))
+
+    # ── 图层面板 ────────────────────────────────────────────────────
+
+    def _build_layers_panel(self, parent: tk.Widget) -> None:
+        header = ttk.Frame(parent, style="Panel.TFrame")
+        header.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(header, text="图层", style="Group.TLabel").pack(side=tk.LEFT, padx=6, pady=(4, 2))
+        body = ttk.Frame(parent, style="Panel.TFrame")
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        canvas_inner = tk.Canvas(body, bg=self._theme()["panel_bg"], highlightthickness=0)
+        self._lib_canvases.append(canvas_inner)
+        scrollbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=canvas_inner.yview)
+        canvas_inner.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas_inner)
+        self._layers_inner = inner
+        win_id = canvas_inner.create_window((0, 0), window=inner, anchor=tk.NW)
+
+        def _on_inner_configure(_event):
+            canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
+            canvas_inner.itemconfigure(win_id, width=canvas_inner.winfo_width())
+
+        def _on_canvas_configure(event):
+            canvas_inner.itemconfigure(win_id, width=event.width)
+
+        def _on_mousewheel(event):
+            units = mousewheel_units(event)
+            if units:
+                canvas_inner.yview_scroll(units, "units")
+            return "break"
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas_inner.bind("<Configure>", _on_canvas_configure)
+        canvas_inner.bind("<MouseWheel>", _on_mousewheel)
+        canvas_inner.bind("<Button-4>", _on_mousewheel)
+        canvas_inner.bind("<Button-5>", _on_mousewheel)
+        bind_mousewheel_tree(inner, _on_mousewheel)
+        self._refresh_layers_panel()
+
+    def _refresh_layers_panel(self) -> None:
+        inner = self._layers_inner
+        if inner is None or not inner.winfo_exists():
+            return
+        top_first = sorted(self.document.shapes, key=lambda s: s.z_order, reverse=True)
+        key = (
+            tuple(
+                (s.id, s.z_order, getattr(s, "visible", True), getattr(s, "locked", False), shape_display_name(s))
+                for s in top_first
+            ),
+            tuple(sorted(self.selected_ids)),
+            self._layers_rename_id,
+        )
+        if key == self._layers_panel_key:
+            return
+        self._layers_panel_key = key
+        for child in inner.winfo_children():
+            child.destroy()
+        if not top_first:
+            ttk.Label(inner, text="暂无图层", style="Group.TLabel").pack(anchor=tk.W, padx=8, pady=8)
+            return
+        for shape in top_first:
+            self._build_layer_row(inner, shape)
+
+    def _build_layer_row(self, parent: tk.Widget, shape) -> None:
+        selected = shape.id in self.selected_ids
+        row = ttk.Frame(parent, style="LayerSel.TFrame" if selected else "Panel.TFrame")
+        row.pack(fill=tk.X, padx=2, pady=1)
+        vis = "👁" if getattr(shape, "visible", True) else "🚫"
+        ttk.Button(row, text=vis, width=3, style="Tool.TButton",
+                   command=lambda s=shape.id: self._toggle_layer_visible(s)).pack(side=tk.LEFT, padx=1)
+        lock = "🔒" if getattr(shape, "locked", False) else "🔓"
+        ttk.Button(row, text=lock, width=3, style="Tool.TButton",
+                   command=lambda s=shape.id: self._toggle_layer_locked(s)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(row, text="▼", width=3, style="Tool.TButton",
+                   command=lambda s=shape.id: self._lower_one(s)).pack(side=tk.RIGHT, padx=1)
+        ttk.Button(row, text="▲", width=3, style="Tool.TButton",
+                   command=lambda s=shape.id: self._raise_one(s)).pack(side=tk.RIGHT, padx=1)
+        if shape.id == self._layers_rename_id:
+            var = tk.StringVar(value=getattr(shape, "name", ""))
+            entry = ttk.Entry(row, textvariable=var)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            entry.focus_set()
+            entry.select_range(0, tk.END)
+            entry.bind("<Return>", lambda _e, s=shape.id, v=var: self._commit_layer_rename(s, v.get()))
+            entry.bind("<FocusOut>", lambda _e, s=shape.id, v=var: self._commit_layer_rename(s, v.get()))
+            entry.bind("<Escape>", lambda _e: self._cancel_layer_rename())
+        else:
+            label = ttk.Label(row, text=shape_display_name(shape),
+                              style="LayerSel.TLabel" if selected else "TLabel")
+            label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            label.bind("<Button-1>", lambda _e, s=shape.id: self._select_layer(s))
+            label.bind("<Double-Button-1>", lambda _e, s=shape.id: self._begin_layer_rename(s))
+
+    def _toggle_layer_visible(self, sid: str) -> None:
+        shape = self.document.find_shape(sid)
+        if shape is None:
+            return
+        shape.visible = not getattr(shape, "visible", True)
+        if not shape.visible:
+            self.selected_ids.discard(sid)
+        self._push_history()
+        self.redraw()
+
+    def _toggle_layer_locked(self, sid: str) -> None:
+        shape = self.document.find_shape(sid)
+        if shape is None:
+            return
+        shape.locked = not getattr(shape, "locked", False)
+        if shape.locked:
+            self.selected_ids.discard(sid)
+        self._push_history()
+        self.redraw()
+
+    def _select_layer(self, sid: str) -> None:
+        self.selected_ids = {sid}
+        self.redraw()
+
+    def _raise_one(self, sid: str) -> None:
+        if self.document.raise_shapes({sid}):
+            self._push_history()
+            self.redraw()
+
+    def _lower_one(self, sid: str) -> None:
+        if self.document.lower_shapes({sid}):
+            self._push_history()
+            self.redraw()
+
+    def _begin_layer_rename(self, sid: str) -> None:
+        self._layers_rename_id = sid
+        self._refresh_layers_panel()
+
+    def _commit_layer_rename(self, sid: str, value: str) -> None:
+        if self._layers_rename_id != sid:
+            return
+        self._layers_rename_id = None
+        shape = self.document.find_shape(sid)
+        if shape is not None and value.strip() != getattr(shape, "name", ""):
+            shape.name = value.strip()
+            self._push_history()
+        self.redraw()
+
+    def _cancel_layer_rename(self) -> None:
+        if self._layers_rename_id is None:
+            return
+        self._layers_rename_id = None
+        self.redraw()
 
     def _build_workspace(self, parent: tk.Widget) -> None:
         canvas_frame = ttk.Frame(parent, style="App.TFrame")
@@ -997,6 +1181,15 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-v>", lambda _e: self.paste_selection())
         self.bind("<Delete>", lambda _e: self.delete_selection())
         self.bind("<Escape>", lambda _e: self.clear_selection())
+        # 图层层级：箭头键（跨键盘布局可靠）+ 括号键备用
+        self.bind("<Control-Up>", lambda _e: self.raise_layer())
+        self.bind("<Control-Down>", lambda _e: self.lower_layer())
+        self.bind("<Control-Shift-Up>", lambda _e: self.bring_to_front())
+        self.bind("<Control-Shift-Down>", lambda _e: self.send_to_back())
+        self.bind("<Control-bracketright>", lambda _e: self.raise_layer())
+        self.bind("<Control-bracketleft>", lambda _e: self.lower_layer())
+        self.bind("<Control-braceright>", lambda _e: self.bring_to_front())
+        self.bind("<Control-braceleft>", lambda _e: self.send_to_back())
         for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("e", "eraser"), ("t", "text"), ("k", "connector")]:
             self.bind(key, lambda _e, t=tool: self.set_tool(t))
         self.bind("<KeyPress-space>", self.on_space_down)
@@ -1523,6 +1716,7 @@ class VectorFlowApp(tk.Tk):
         self.canvas.tag_raise("preview")
         self.canvas.tag_raise("inline_editor")
         self._rebuild_inspector()
+        self._refresh_layers_panel()
         self._update_status()
 
     def _on_connector_animation_toggle(self) -> None:
@@ -2049,6 +2243,14 @@ class VectorFlowApp(tk.Tk):
         menu.add_command(label="保存到我的组件库", command=self.save_selection_to_component_library, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
         if isinstance(shape, GroupShape) or self._selected_group() is not None:
             menu.add_command(label="编辑 Metadata", command=self.open_metadata_dialog)
+        menu.add_separator()
+        layer_state = tk.NORMAL if self.selected_ids else tk.DISABLED
+        layer_menu = tk.Menu(menu, tearoff=False)
+        layer_menu.add_command(label="置于顶层", command=self.bring_to_front, state=layer_state)
+        layer_menu.add_command(label="上移一层", command=self.raise_layer, state=layer_state)
+        layer_menu.add_command(label="下移一层", command=self.lower_layer, state=layer_state)
+        layer_menu.add_command(label="置于底层", command=self.send_to_back, state=layer_state)
+        menu.add_cascade(label="层级", menu=layer_menu, state=layer_state)
         menu.add_separator()
         menu.add_command(label="复制", command=self.copy_selection, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
         menu.add_command(label="删除", command=self.delete_selection, state=tk.NORMAL if self.selected_ids else tk.DISABLED)
@@ -2625,7 +2827,7 @@ class VectorFlowApp(tk.Tk):
     def _rotate_selected_by(self, deg: float) -> None:
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
-            if shape and hasattr(shape, "rotate"):
+            if shape and not getattr(shape, "locked", False) and hasattr(shape, "rotate"):
                 shape.rotate(deg)
 
     def _do_scale(self) -> None:
@@ -2634,7 +2836,7 @@ class VectorFlowApp(tk.Tk):
             return
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
-            if shape and hasattr(shape, "scale"):
+            if shape and not getattr(shape, "locked", False) and hasattr(shape, "scale"):
                 shape.scale(factor)
         if self.selected_ids:
             self._push_history()
@@ -2643,7 +2845,7 @@ class VectorFlowApp(tk.Tk):
     def flip_horizontal(self) -> None:
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
-            if shape and hasattr(shape, "flip_horizontal"):
+            if shape and not getattr(shape, "locked", False) and hasattr(shape, "flip_horizontal"):
                 shape.flip_horizontal()
         if self.selected_ids:
             self._push_history()
@@ -2652,11 +2854,36 @@ class VectorFlowApp(tk.Tk):
     def flip_vertical(self) -> None:
         for sid in self.selected_ids:
             shape = self.document.find_shape(sid)
-            if shape and hasattr(shape, "flip_vertical"):
+            if shape and not getattr(shape, "locked", False) and hasattr(shape, "flip_vertical"):
                 shape.flip_vertical()
         if self.selected_ids:
             self._push_history()
             self.redraw()
+
+    # ── 图层 / 层级 ─────────────────────────────────────────────────
+
+    def _layer_op(self, op_name: str, status: str) -> None:
+        """统一执行某个层级调序操作并刷新（无选中或无变化则提示）。"""
+        if not self.selected_ids:
+            self._update_status("请先选择图形")
+            return
+        changed = getattr(self.document, op_name)(set(self.selected_ids))
+        if changed:
+            self._push_history()
+            self.redraw()
+            self._update_status(status)
+
+    def bring_to_front(self) -> None:
+        self._layer_op("bring_to_front", "已置于顶层")
+
+    def send_to_back(self) -> None:
+        self._layer_op("send_to_back", "已置于底层")
+
+    def raise_layer(self) -> None:
+        self._layer_op("raise_shapes", "已上移一层")
+
+    def lower_layer(self) -> None:
+        self._layer_op("lower_shapes", "已下移一层")
 
     # ── File I/O ────────────────────────────────────────────────────
 

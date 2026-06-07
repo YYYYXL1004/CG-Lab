@@ -57,9 +57,14 @@ class Renderer:
         pixels = image.load()
         if show_grid:
             self._draw_grid(pixels, document.grid_size, zoom, pan, grid_color)
+        hidden_ids = {s.id for s in document.shapes if not getattr(s, "visible", True)}
         for shape in sorted(document.shapes, key=lambda item: item.z_order):
+            if not getattr(shape, "visible", True):
+                continue
             self._draw_shape(image, pixels, shape, zoom, pan, draft=draft, circuit_state=circuit_state)
         for connector in document.connectors:
+            if connector.start_shape_id in hidden_ids or connector.end_shape_id in hidden_ids:
+                continue
             energized = circuit_state is not None and connector.id in circuit_state.get("energized_connector_ids", set())
             self._draw_connector(
                 pixels, document, connector, zoom, pan,

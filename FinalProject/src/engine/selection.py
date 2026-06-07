@@ -27,7 +27,13 @@ def selection_bounds(document: Document, shape_ids: list[str] | set[str]) -> Bou
 
 def shapes_in_rect(document: Document, rect: Bounds) -> list[str]:
     normalized = normalize_bounds(rect)
-    return [shape.id for shape in document.shapes if bounds_intersect(shape.bounds(), normalized)]
+    return [
+        shape.id
+        for shape in document.shapes
+        if getattr(shape, "visible", True)
+        and not getattr(shape, "locked", False)
+        and bounds_intersect(shape.bounds(), normalized)
+    ]
 
 
 def bounds_intersect(a: Bounds, b: Bounds) -> bool:

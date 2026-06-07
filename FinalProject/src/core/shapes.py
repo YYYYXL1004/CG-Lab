@@ -16,6 +16,37 @@ def new_id(prefix: str = "shape") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+# 图元 kind -> 中文名（图形库标签与图层面板共用的单一真源）
+KIND_LABELS: dict[str, str] = {
+    # 流程图
+    "process": "处理框", "decision": "判断框", "terminal": "起止框",
+    "data": "数据框", "document": "文档框", "database": "数据库", "subprocess": "子程序",
+    # 通用图形
+    "circle": "圆形", "ellipse": "椭圆", "triangle": "三角形",
+    "trapezoid": "梯形", "parallelogram": "平行四边形", "org_box": "圆角矩形",
+    "star5": "五角星", "hexagon": "六边形", "plus": "加号",
+    "arrow_right": "右箭头", "arrow_left": "左箭头", "cloud": "云形",
+    # 电路图
+    "resistor": "电阻", "capacitor": "电容", "ground": "接地",
+    "battery": "电池", "switch": "开关", "led": "LED",
+    "inductor": "电感", "voltage_source": "电压源",
+}
+
+
+def _layer_dict(shape) -> dict:
+    """图层公共字段序列化（可见性 / 锁定 / 自定义名称）。"""
+    return {"visible": shape.visible, "locked": shape.locked, "name": shape.name}
+
+
+def _layer_kwargs(payload: dict) -> dict:
+    """从 payload 读取图层公共字段，缺省向后兼容旧存档。"""
+    return {
+        "visible": bool(payload.get("visible", True)),
+        "locked": bool(payload.get("locked", False)),
+        "name": str(payload.get("name", "")),
+    }
+
+
 @dataclass
 class FlowchartShape:
     kind: str
@@ -30,6 +61,9 @@ class FlowchartShape:
     rotation: float = 0.0
     flip_x: bool = False
     flip_y: bool = False
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
 
     def center(self) -> Point:
         return Point(self.x + self.width / 2, self.y + self.height / 2)
@@ -364,6 +398,7 @@ class FlowchartShape:
             "rotation": self.rotation,
             "flip_x": self.flip_x,
             "flip_y": self.flip_y,
+            **_layer_dict(self),
         }
 
     @classmethod
@@ -381,6 +416,7 @@ class FlowchartShape:
             rotation=float(payload.get("rotation", 0)),
             flip_x=bool(payload.get("flip_x", False)),
             flip_y=bool(payload.get("flip_y", False)),
+            **_layer_kwargs(payload),
         )
 
 
@@ -393,6 +429,9 @@ class LineShape:
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
     id: str = field(default_factory=lambda: new_id("line"))
     z_order: int = 0
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
 
     def move(self, dx: float, dy: float) -> None:
         self.x1 += dx
@@ -443,6 +482,7 @@ class LineShape:
             "y2": self.y2,
             "style": self.style.to_dict(),
             "z_order": self.z_order,
+            **_layer_dict(self),
         }
 
     @classmethod
@@ -455,6 +495,7 @@ class LineShape:
             style=ShapeStyle.from_dict(payload.get("style")),
             id=payload.get("id", new_id("line")),
             z_order=int(payload.get("z_order", 0)),
+            **_layer_kwargs(payload),
         )
 
 
@@ -464,6 +505,9 @@ class CurveShape:
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
     id: str = field(default_factory=lambda: new_id("curve"))
     z_order: int = 0
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
 
     def move(self, dx: float, dy: float) -> None:
         self.points = [(x + dx, y + dy) for x, y in self.points]
@@ -517,6 +561,7 @@ class CurveShape:
             "points": [[p[0], p[1]] for p in self.points],
             "style": self.style.to_dict(),
             "z_order": self.z_order,
+            **_layer_dict(self),
         }
 
     @classmethod
@@ -535,6 +580,7 @@ class CurveShape:
             style=ShapeStyle.from_dict(payload.get("style")),
             id=payload.get("id", new_id("curve")),
             z_order=int(payload.get("z_order", 0)),
+            **_layer_kwargs(payload),
         )
 
 
@@ -546,6 +592,9 @@ class TextShape:
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
     id: str = field(default_factory=lambda: new_id("text"))
     z_order: int = 0
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
 
     def move(self, dx: float, dy: float) -> None:
         self.x += dx
@@ -570,6 +619,7 @@ class TextShape:
             "text": self.text,
             "style": self.style.to_dict(),
             "z_order": self.z_order,
+            **_layer_dict(self),
         }
 
     @classmethod
@@ -581,6 +631,7 @@ class TextShape:
             style=ShapeStyle.from_dict(payload.get("style")),
             id=payload.get("id", new_id("text")),
             z_order=int(payload.get("z_order", 0)),
+            **_layer_kwargs(payload),
         )
 
 
@@ -595,6 +646,9 @@ class RasterImageShape:
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
     id: str = field(default_factory=lambda: new_id("image"))
     z_order: int = 0
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
     _image_cache: Image.Image | None = field(default=None, init=False, repr=False, compare=False)
     _resize_cache: dict[tuple[int, int], Image.Image] = field(default_factory=dict, init=False, repr=False, compare=False)
 
@@ -657,6 +711,7 @@ class RasterImageShape:
             "source_name": self.source_name,
             "style": self.style.to_dict(),
             "z_order": self.z_order,
+            **_layer_dict(self),
         }
 
     @classmethod
@@ -671,6 +726,7 @@ class RasterImageShape:
             style=ShapeStyle.from_dict(payload.get("style")),
             id=payload.get("id", new_id("image")),
             z_order=int(payload.get("z_order", 0)),
+            **_layer_kwargs(payload),
         )
 
 
@@ -682,6 +738,8 @@ class GroupShape:
     metadata: dict[str, str] = field(default_factory=dict)
     id: str = field(default_factory=lambda: new_id("group"))
     z_order: int = 0
+    visible: bool = True
+    locked: bool = False
 
     def move(self, dx: float, dy: float) -> None:
         for child in self.children:
@@ -753,6 +811,8 @@ class GroupShape:
             "connectors": [connector.to_dict() for connector in self.connectors],
             "metadata": dict(self.metadata),
             "z_order": self.z_order,
+            "visible": self.visible,
+            "locked": self.locked,
         }
 
     @classmethod
@@ -764,6 +824,8 @@ class GroupShape:
             metadata={str(key): str(value) for key, value in payload.get("metadata", {}).items()},
             id=payload.get("id", new_id("group")),
             z_order=int(payload.get("z_order", 0)),
+            visible=bool(payload.get("visible", True)),
+            locked=bool(payload.get("locked", False)),
         )
 
 
@@ -829,6 +891,30 @@ def shape_from_dict(payload: dict) -> Shape:
     if shape_type == "group":
         return GroupShape.from_dict(payload)
     raise ValueError(f"Unsupported shape type: {shape_type!r}")
+
+
+def shape_display_name(shape: "Shape") -> str:
+    """图层面板显示名：优先自定义 name，否则按类型派生一个可读标签。"""
+    name = getattr(shape, "name", "")
+    if name:
+        return name
+    if isinstance(shape, GroupShape):
+        return shape.name or "组件"
+    if isinstance(shape, FlowchartShape):
+        return KIND_LABELS.get(shape.kind, shape.kind or "图形")
+    if isinstance(shape, TextShape):
+        first = (shape.text or "").splitlines()[0] if shape.text else ""
+        first = first.strip()
+        if not first:
+            return "文本"
+        return first if len(first) <= 12 else first[:12] + "…"
+    if isinstance(shape, LineShape):
+        return "直线"
+    if isinstance(shape, CurveShape):
+        return "曲线"
+    if isinstance(shape, RasterImageShape):
+        return shape.source_name or "图片"
+    return "图形"
 
 
 def _decode_data_url(data_url: str) -> bytes:
