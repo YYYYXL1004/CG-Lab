@@ -4,7 +4,7 @@ import math
 
 from algorithms.transform import Matrix3, Point as MatrixPoint
 from core.document import Document
-from core.shapes import CurveShape, FlowchartShape, LineShape, RasterImageShape, TextShape, shape_from_dict
+from core.shapes import CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape, shape_from_dict
 
 
 Bounds = tuple[float, float, float, float]
@@ -155,6 +155,12 @@ def apply_group_resize(
             shape.y = top
             shape.width = max(12, right - left)
             shape.height = max(12, bottom - top)
+        elif isinstance(shape, GroupShape) and isinstance(original, GroupShape):
+            updated = shape_from_dict(original.to_dict())
+            assert isinstance(updated, GroupShape)
+            updated.scale_from_bounds(original_bounds, (nx1, ny1, nx2, ny2))
+            shape.children = updated.children
+            shape.connectors = updated.connectors
 
 
 def apply_group_rotation(
@@ -202,6 +208,12 @@ def apply_group_rotation(
             shape.y = new_center.y - original.height / 2
             shape.width = original.width
             shape.height = original.height
+        elif isinstance(shape, GroupShape) and isinstance(original, GroupShape):
+            updated = shape_from_dict(original.to_dict())
+            assert isinstance(updated, GroupShape)
+            updated.rotate_around(center, angle_degrees)
+            shape.children = updated.children
+            shape.connectors = updated.connectors
 
 
 def normalize_bounds(bounds: Bounds) -> Bounds:

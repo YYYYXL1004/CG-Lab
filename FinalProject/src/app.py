@@ -275,6 +275,23 @@ def _is_group_shape(shape: Shape) -> bool:
     return isinstance(shape, GroupShape)
 
 
+def can_group_selection(document: Document, selected_ids: set[str]) -> bool:
+    selected = _selected_shapes(document, selected_ids)
+    return len(selected) >= 2 and all(not getattr(shape, "locked", False) for shape in selected)
+
+
+def can_ungroup_selection(document: Document, selected_ids: set[str]) -> bool:
+    group = _selected_group_for(document, selected_ids)
+    return group is not None and not getattr(group, "locked", False)
+
+
+def _selected_group_for(document: Document, selected_ids: set[str]) -> GroupShape | None:
+    if len(selected_ids) != 1:
+        return None
+    shape = document.find_shape(next(iter(selected_ids)))
+    return shape if isinstance(shape, GroupShape) else None
+
+
 def bitmap_data_url_for_display(image: Image.Image, max_display: int = 520) -> tuple[str, int, int]:
     scale = min(1.0, max_display / max(image.size))
     display_w = max(1, round(image.width * scale))
@@ -657,6 +674,11 @@ class VectorFlowApp(tk.Tk):
         edit_menu.add_command(label="复制", accelerator="Ctrl+C", command=self.copy_selection)
         edit_menu.add_command(label="粘贴", accelerator="Ctrl+V", command=self.paste_selection)
         edit_menu.add_command(label="删除", accelerator="Delete", command=self.delete_selection)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="组合", accelerator="Ctrl+G", command=self.group_selection)
+        edit_menu.add_command(label="取消组合", accelerator="Ctrl+Shift+G", command=self.ungroup_selection)
+        edit_menu.add_command(label="锁定", accelerator="Ctrl+L", command=self.lock_selection)
+        edit_menu.add_command(label="解锁", accelerator="Ctrl+Shift+L", command=self.unlock_selection)
         edit_menu.add_separator()
         layer_menu = tk.Menu(edit_menu, tearoff=False)
         layer_menu.add_command(label="置于顶层", accelerator="Ctrl+Shift+↑", command=self.bring_to_front)
@@ -1082,9 +1104,13 @@ class VectorFlowApp(tk.Tk):
         shape = self.document.find_shape(sid)
         if shape is None:
             return
-        shape.locked = not getattr(shape, "locked", False)
-        if shape.locked:
+        locked = not getattr(shape, "locked", False)
+        if not self.document.set_shapes_locked({sid}, locked):
+            return
+        if locked:
             self.selected_ids.discard(sid)
+        else:
+            self.selected_ids = {sid}
         self._push_history()
         self.redraw()
 
@@ -1188,6 +1214,10 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-z>", lambda _e: self.undo())
         self.bind("<Control-c>", lambda _e: self.copy_selection())
         self.bind("<Control-v>", lambda _e: self.paste_selection())
+        self.bind("<Control-g>", lambda _e: self.group_selection())
+        self.bind("<Control-G>", lambda _e: self.ungroup_selection())
+        self.bind("<Control-l>", lambda _e: self.lock_selection())
+        self.bind("<Control-L>", lambda _e: self.unlock_selection())
         self.bind("<Delete>", lambda _e: self.delete_selection())
         self.bind("<Escape>", lambda _e: self.clear_selection())
         # 图层层级：箭头键（跨键盘布局可靠）+ 括号键备用
@@ -1469,11 +1499,13 @@ class VectorFlowApp(tk.Tk):
         self._inspector_button(parent, "缩放", self._do_scale)
         self._inspector_button(parent, "水平翻转", self.flip_horizontal)
         self._inspector_button(parent, "垂直翻转", self.flip_vertical)
+        self._inspector_button(parent, "锁定", self.lock_selection)
         self._inspector_button(parent, "复制", self.copy_selection)
         self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
 
     def _build_image_inspector(self, parent: tk.Widget) -> None:
         self._inspector_title(parent, "照片", "已导入的位图")
+        self._inspector_button(parent, "锁定", self.lock_selection)
         self._inspector_button(parent, "复制", self.copy_selection)
         self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
         ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
@@ -1492,15 +1524,19 @@ class VectorFlowApp(tk.Tk):
             else:
                 ttk.Label(parent, text="暂无 Metadata", style="Group.TLabel").pack(anchor=tk.W, padx=12, pady=2)
         ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=10)
+        self._inspector_button(parent, "取消组合", self.ungroup_selection, "Accent.TButton")
+        self._inspector_button(parent, "锁定", self.lock_selection)
         self._inspector_button(parent, "复制", self.copy_selection)
         self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
 
     def _build_multi_inspector(self, parent: tk.Widget) -> None:
         self._sync_style_vars_from_selection()
         self._inspector_title(parent, "多选", f"已选择 {len(self.selected_ids)} 个图形")
+        self._inspector_button(parent, "组合", self.group_selection, "Accent.TButton")
         self._inspector_button(parent, "应用图形样式", self.apply_style)
         self._inspector_button(parent, "旋转", self._do_rotate)
         self._inspector_button(parent, "缩放", self._do_scale)
+        self._inspector_button(parent, "锁定", self.lock_selection)
         self._inspector_button(parent, "复制", self.copy_selection)
         self._inspector_button(parent, "删除", self.delete_selection, "Danger.TButton")
 
@@ -2292,6 +2328,20 @@ class VectorFlowApp(tk.Tk):
         if isinstance(shape, GroupShape) or self._selected_group() is not None:
             menu.add_command(label="编辑 Metadata", command=self.open_metadata_dialog)
         menu.add_separator()
+        menu.add_command(
+            label="组合",
+            command=self.group_selection,
+            state=tk.NORMAL if can_group_selection(self.document, self.selected_ids) else tk.DISABLED,
+        )
+        menu.add_command(
+            label="取消组合",
+            command=self.ungroup_selection,
+            state=tk.NORMAL if can_ungroup_selection(self.document, self.selected_ids) else tk.DISABLED,
+        )
+        selection_state = tk.NORMAL if self.selected_ids else tk.DISABLED
+        menu.add_command(label="锁定", command=self.lock_selection, state=selection_state)
+        menu.add_command(label="解锁", command=self.unlock_selection, state=selection_state)
+        menu.add_separator()
         layer_state = tk.NORMAL if self.selected_ids else tk.DISABLED
         layer_menu = tk.Menu(menu, tearoff=False)
         layer_menu.add_command(label="置于顶层", command=self.bring_to_front, state=layer_state)
@@ -2946,6 +2996,61 @@ class VectorFlowApp(tk.Tk):
         self.clipboard_ids = list(self.selected_ids)
         self._push_history()
         self.redraw()
+
+    def group_selection(self) -> None:
+        if not can_group_selection(self.document, self.selected_ids):
+            self._update_status("请选择至少两个未锁定图形再组合")
+            return
+        group = build_group_from_selection(self.document, self.selected_ids, name="组合")
+        self.document.replace_selection_with_group(self.selected_ids, group)
+        self.selected_ids = {group.id}
+        self._push_history()
+        self.redraw()
+        self._update_status(f"已组合 {len(group.children)} 个图形")
+
+    def ungroup_selection(self) -> None:
+        if not can_ungroup_selection(self.document, self.selected_ids):
+            self._update_status("请选择一个未锁定组合再取消组合")
+            return
+        group_id = next(iter(self.selected_ids))
+        restored = self.document.ungroup_shape(group_id)
+        if not restored:
+            self._update_status("没有可取消的组合")
+            return
+        self.selected_ids = {shape.id for shape in restored}
+        self._push_history()
+        self.redraw()
+        self._update_status(f"已取消组合，恢复 {len(restored)} 个图形")
+
+    def lock_selection(self) -> None:
+        if not self.selected_ids:
+            self._update_status("请先选择图形")
+            return
+        changed = self.document.set_shapes_locked(self.selected_ids, True)
+        if not changed:
+            self._update_status("选中图形已锁定")
+            return
+        count = len(self.selected_ids)
+        self.selected_ids.clear()
+        self._push_history()
+        self.redraw()
+        self._update_status(f"已锁定 {count} 个图形")
+
+    def unlock_selection(self) -> None:
+        selected = set(self.selected_ids)
+        if not selected:
+            selected = {shape.id for shape in self.document.shapes if getattr(shape, "locked", False)}
+        if not selected:
+            self._update_status("没有需要解锁的图形")
+            return
+        changed = self.document.set_shapes_locked(selected, False)
+        if not changed:
+            self._update_status("选中图形未锁定")
+            return
+        self.selected_ids = selected
+        self._push_history()
+        self.redraw()
+        self._update_status(f"已解锁 {len(selected)} 个图形")
 
     def delete_selection(self) -> None:
         if not self.selected_ids:

@@ -161,6 +161,7 @@ class Document:
 
     def replace_selection_with_group(self, shape_ids: set[str] | list[str], group: GroupShape) -> GroupShape:
         selected = set(shape_ids)
+        internal_connector_ids = {item.id for item in group.connectors}
         insert_at = min(
             (index for index, shape in enumerate(self.shapes) if shape.id in selected),
             default=len(self.shapes),
@@ -169,13 +170,42 @@ class Document:
         self.connectors = [
             connector
             for connector in self.connectors
-            if connector.start_shape_id not in selected and connector.end_shape_id not in selected
+            if connector.start_shape_id not in selected
+            and connector.end_shape_id not in selected
+            and connector.id not in internal_connector_ids
         ]
         self.shapes.insert(insert_at, group)
         for index, shape in enumerate(self.shapes):
             shape.z_order = index
         self._rebuild_shape_index()
         return group
+
+    def ungroup_shape(self, group_id: str) -> list[Shape]:
+        group_index = next(
+            (index for index, shape in enumerate(self.shapes) if shape.id == group_id and isinstance(shape, GroupShape)),
+            None,
+        )
+        if group_index is None:
+            return []
+        group = self.shapes[group_index]
+        assert isinstance(group, GroupShape)
+        children = [shape_from_dict(child.to_dict()) for child in group.children]
+        connectors = [ConnectorShape.from_dict(connector.to_dict()) for connector in group.connectors]
+        self.shapes = self.shapes[:group_index] + children + self.shapes[group_index + 1 :]
+        self.connectors.extend(connectors)
+        self._renormalize_z()
+        return children
+
+    def set_shapes_locked(self, shape_ids: set[str] | list[str], locked: bool) -> bool:
+        selected = set(shape_ids)
+        changed = False
+        for shape in self.shapes:
+            if shape.id in selected and getattr(shape, "locked", False) != locked:
+                shape.locked = locked
+                changed = True
+        if changed:
+            self._rebuild_shape_index()
+        return changed
 
     def copy_paste(self, shape_ids: list[str], offset: tuple[float, float] = (28, 28)) -> list[Shape]:
         selected = set(shape_ids)
@@ -184,8 +214,7 @@ class Document:
         for shape in self.shapes:
             if shape.id not in selected:
                 continue
-            clone = shape_from_dict(shape.to_dict())
-            clone.id = _new_like_id(clone)
+            clone = _clone_shape_with_new_ids(shape)
             clone.move(offset[0], offset[1])
             old_to_new[shape.id] = clone.id
             pasted.append(self.add_shape(clone))
@@ -283,6 +312,28 @@ def _new_like_id(shape: Shape) -> str:
     if isinstance(shape, GroupShape):
         return new_id("group")
     return new_id("shape")
+
+
+def _clone_shape_with_new_ids(shape: Shape) -> Shape:
+    clone = shape_from_dict(shape.to_dict())
+    clone.id = _new_like_id(clone)
+    if isinstance(clone, GroupShape):
+        _remap_group_shape_ids(clone)
+    return clone
+
+
+def _remap_group_shape_ids(group: GroupShape) -> None:
+    old_to_new: dict[str, str] = {}
+    for child in group.children:
+        old_id = child.id
+        child.id = _new_like_id(child)
+        old_to_new[old_id] = child.id
+        if isinstance(child, GroupShape):
+            _remap_group_shape_ids(child)
+    for connector in group.connectors:
+        connector.id = new_id("conn")
+        connector.start_shape_id = old_to_new.get(connector.start_shape_id, connector.start_shape_id)
+        connector.end_shape_id = old_to_new.get(connector.end_shape_id, connector.end_shape_id)
 
 
 def _elbow_route(

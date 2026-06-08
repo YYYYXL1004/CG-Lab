@@ -834,8 +834,25 @@ class GroupShape:
             if hasattr(child, "scale"):
                 child.scale(factor)
 
+    def scale_from_bounds(
+        self,
+        old_bounds: tuple[float, float, float, float],
+        new_bounds: tuple[float, float, float, float],
+    ) -> None:
+        ox1, oy1, ox2, oy2 = old_bounds
+        nx1, ny1, nx2, ny2 = new_bounds
+        old_w = max(1e-6, ox2 - ox1)
+        old_h = max(1e-6, oy2 - oy1)
+        sx = (nx2 - nx1) / old_w
+        sy = (ny2 - ny1) / old_h
+        for child in self.children:
+            self._scale_child_from_bounds(child, (ox1, oy1), (nx1, ny1), sx, sy)
+
     def rotate(self, angle_degrees: float) -> None:
         center = self.center()
+        self.rotate_around(center, angle_degrees)
+
+    def rotate_around(self, center: Point, angle_degrees: float) -> None:
         matrix = Matrix3.rotation(math.radians(angle_degrees), center=center)
         for child in self.children:
             child_center = child.center() if hasattr(child, "center") else Point((child.bounds()[0] + child.bounds()[2]) / 2, (child.bounds()[1] + child.bounds()[3]) / 2)
@@ -877,6 +894,44 @@ class GroupShape:
 
     def hit_test(self, x: float, y: float) -> bool:
         return any(child.hit_test(x, y) for child in self.children)
+
+    def _scale_child_from_bounds(
+        self,
+        child: "Shape",
+        old_origin: tuple[float, float],
+        new_origin: tuple[float, float],
+        sx: float,
+        sy: float,
+    ) -> None:
+        def map_point(point: tuple[float, float]) -> tuple[float, float]:
+            return new_origin[0] + (point[0] - old_origin[0]) * sx, new_origin[1] + (point[1] - old_origin[1]) * sy
+
+        if isinstance(child, FlowchartShape):
+            left, top = map_point((child.x, child.y))
+            right, bottom = map_point((child.x + child.width, child.y + child.height))
+            child.x = left
+            child.y = top
+            child.width = max(12, right - left)
+            child.height = max(12, bottom - top)
+        elif isinstance(child, LineShape):
+            child.x1, child.y1 = map_point((child.x1, child.y1))
+            child.x2, child.y2 = map_point((child.x2, child.y2))
+        elif isinstance(child, CurveShape):
+            child.points = [map_point(point) for point in child.points]
+        elif isinstance(child, BezierShape):
+            child.points = [map_point(point) for point in child.points]
+        elif isinstance(child, TextShape):
+            child.x, child.y = map_point((child.x, child.y))
+        elif isinstance(child, RasterImageShape):
+            left, top = map_point((child.x, child.y))
+            right, bottom = map_point((child.x + child.width, child.y + child.height))
+            child.x = left
+            child.y = top
+            child.width = max(12, right - left)
+            child.height = max(12, bottom - top)
+        elif isinstance(child, GroupShape):
+            cx1, cy1, cx2, cy2 = child.bounds()
+            child.scale_from_bounds(child.bounds(), (*map_point((cx1, cy1)), *map_point((cx2, cy2))))
 
     def to_dict(self) -> dict:
         return {

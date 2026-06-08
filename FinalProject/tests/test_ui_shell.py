@@ -7,6 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from app import (
     REQUIRED_THEME_TOKENS,
     THEMES,
+    can_group_selection,
+    can_ungroup_selection,
     TOOL_SPECS,
     bind_mousewheel_tree,
     clamp_drag_width,
@@ -23,7 +25,7 @@ from app import (
     viewport_center_world,
 )
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, LineShape, TextShape
+from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, TextShape
 
 
 class UiShellTests(unittest.TestCase):
@@ -61,6 +63,27 @@ class UiShellTests(unittest.TestCase):
         self.assertEqual(inspector_context_for(document, {line.id}, "select"), "shape")
         self.assertEqual(inspector_context_for(document, {curve.id}, "select"), "shape")
         self.assertEqual(inspector_context_for(document, {flow.id, line.id}, "select"), "multi")
+
+    def test_group_action_availability_requires_multiple_unlocked_top_level_shapes(self):
+        document = Document()
+        first = document.add_shape(FlowchartShape("process", 0, 0, 100, 60))
+        second = document.add_shape(FlowchartShape("process", 140, 0, 100, 60))
+        locked = document.add_shape(FlowchartShape("process", 280, 0, 100, 60, locked=True))
+
+        self.assertTrue(can_group_selection(document, {first.id, second.id}))
+        self.assertFalse(can_group_selection(document, {first.id}))
+        self.assertFalse(can_group_selection(document, {first.id, locked.id}))
+
+    def test_ungroup_action_availability_requires_single_unlocked_group(self):
+        document = Document()
+        child = FlowchartShape("process", 0, 0, 100, 60)
+        group = document.add_shape(GroupShape("Pair", [child]))
+        flow = document.add_shape(FlowchartShape("process", 140, 0, 100, 60))
+
+        self.assertTrue(can_ungroup_selection(document, {group.id}))
+        self.assertFalse(can_ungroup_selection(document, {flow.id}))
+        group.locked = True
+        self.assertFalse(can_ungroup_selection(document, {group.id}))
 
     def test_split_polyline_by_circle_breaks_at_covered_vertices(self):
         points = [(0, 0), (10, 0), (20, 0), (30, 0), (40, 0)]
