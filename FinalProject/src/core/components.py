@@ -116,6 +116,8 @@ def _new_like_id(shape: Shape) -> str:
         return new_id("line")
     if shape.__class__.__name__ == "CurveShape":
         return new_id("curve")
+    if shape.__class__.__name__ == "BezierShape":
+        return new_id("bezier")
     if shape.__class__.__name__ == "RasterImageShape":
         return new_id("image")
     if shape.__class__.__name__ == "GroupShape":

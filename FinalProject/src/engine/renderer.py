@@ -5,13 +5,13 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from algorithms.bezier import catmull_rom_polyline, cubic_bezier
+from algorithms.bezier import bezier_polyline, catmull_rom_polyline, cubic_bezier
 from algorithms.circle import midpoint_circle
 from algorithms.ellipse import midpoint_ellipse
 from algorithms.fill import scanline_fill
 from algorithms.line import bresenham_line, dashed_line
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
+from core.shapes import BezierShape, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
 from engine.animation import animated_flow_pixels
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
@@ -155,6 +155,18 @@ class Renderer:
             screen_pts = [self._world_to_screen(p, zoom, pan) for p in sample]
             _draw_polyline(pixels, screen_pts, shape.style.stroke,
                            max(1, round(shape.style.stroke_width * zoom)), shape.style.dash)
+        elif isinstance(shape, BezierShape):
+            if len(shape.points) < 2:
+                return
+            sample = bezier_polyline(shape.points)
+            screen_pts = [self._world_to_screen(p, zoom, pan) for p in sample]
+            _draw_polyline(
+                pixels,
+                screen_pts,
+                shape.style.stroke,
+                max(1, round(shape.style.stroke_width * zoom)),
+                shape.style.dash,
+            )
         elif isinstance(shape, TextShape):
             self._draw_text(image, shape.text, shape.bounds(), shape.style, zoom, pan)
         elif isinstance(shape, RasterImageShape):

@@ -4,6 +4,39 @@ from __future__ import annotations
 PointTuple = tuple[int | float, int | float]
 
 
+def de_casteljau_point(control_points: list[PointTuple], t: float) -> tuple[float, float]:
+    if not control_points:
+        return 0.0, 0.0
+    current = [(float(x), float(y)) for x, y in control_points]
+    while len(current) > 1:
+        current = [
+            (
+                (1 - t) * current[index][0] + t * current[index + 1][0],
+                (1 - t) * current[index][1] + t * current[index + 1][1],
+            )
+            for index in range(len(current) - 1)
+        ]
+    return current[0]
+
+
+def bezier_polyline(
+    control_points: list[PointTuple],
+    steps: int | None = None,
+) -> list[tuple[int, int]]:
+    if len(control_points) < 2:
+        return [(round(x), round(y)) for x, y in control_points]
+    if steps is None:
+        steps = _adaptive_steps(*control_points)
+    steps = max(1, steps)
+    pixels: list[tuple[int, int]] = []
+    for index in range(steps + 1):
+        point = de_casteljau_point(control_points, index / steps)
+        pixel = (round(point[0]), round(point[1]))
+        if not pixels or pixels[-1] != pixel:
+            pixels.append(pixel)
+    return pixels
+
+
 def cubic_bezier(
     p0: PointTuple,
     p1: PointTuple,

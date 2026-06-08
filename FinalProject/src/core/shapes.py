@@ -8,6 +8,7 @@ from typing import Any
 
 from PIL import Image
 
+from algorithms.bezier import bezier_polyline
 from algorithms.transform import Matrix3, Point
 from core.style import ShapeStyle
 
@@ -585,6 +586,81 @@ class CurveShape:
 
 
 @dataclass
+class BezierShape:
+    points: list[tuple[float, float]]
+    style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
+    id: str = field(default_factory=lambda: new_id("bezier"))
+    z_order: int = 0
+    visible: bool = True
+    locked: bool = False
+    name: str = ""
+
+    def move(self, dx: float, dy: float) -> None:
+        self.points = [(x + dx, y + dy) for x, y in self.points]
+
+    def center(self) -> Point:
+        x1, y1, x2, y2 = self.bounds()
+        return Point((x1 + x2) / 2, (y1 + y2) / 2)
+
+    def scale(self, factor: float) -> None:
+        center = self.center()
+        self.points = [(center.x + (x - center.x) * factor, center.y + (y - center.y) * factor) for x, y in self.points]
+
+    def rotate(self, angle_degrees: float) -> None:
+        center = self.center()
+        matrix = Matrix3.rotation(math.radians(angle_degrees), center=center)
+        rotated = []
+        for x, y in self.points:
+            point = matrix.apply(Point(x, y))
+            rotated.append((point.x, point.y))
+        self.points = rotated
+
+    def flip_horizontal(self) -> None:
+        center = self.center()
+        self.points = [(center.x - (x - center.x), y) for x, y in self.points]
+
+    def flip_vertical(self) -> None:
+        center = self.center()
+        self.points = [(x, center.y - (y - center.y)) for x, y in self.points]
+
+    def bounds(self) -> tuple[float, float, float, float]:
+        if not self.points:
+            return 0.0, 0.0, 0.0, 0.0
+        sampled = [(float(x), float(y)) for x, y in bezier_polyline(self.points)]
+        all_points = list(self.points) + sampled
+        xs = [point[0] for point in all_points]
+        ys = [point[1] for point in all_points]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def hit_test(self, x: float, y: float) -> bool:
+        sampled = bezier_polyline(self.points)
+        for a, b in zip(sampled, sampled[1:]):
+            if _point_segment_distance(x, y, a[0], a[1], b[0], b[1]) <= 7:
+                return True
+        return False
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "type": "bezier",
+            "points": [[p[0], p[1]] for p in self.points],
+            "style": self.style.to_dict(),
+            "z_order": self.z_order,
+            **_layer_dict(self),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "BezierShape":
+        return cls(
+            points=[(float(p[0]), float(p[1])) for p in payload.get("points", [])],
+            style=ShapeStyle.from_dict(payload.get("style")),
+            id=payload.get("id", new_id("bezier")),
+            z_order=int(payload.get("z_order", 0)),
+            **_layer_kwargs(payload),
+        )
+
+
+@dataclass
 class TextShape:
     x: float
     y: float
@@ -873,7 +949,7 @@ class ConnectorShape:
         )
 
 
-Shape = FlowchartShape | LineShape | CurveShape | TextShape | RasterImageShape | GroupShape
+Shape = FlowchartShape | LineShape | CurveShape | BezierShape | TextShape | RasterImageShape | GroupShape
 
 
 def shape_from_dict(payload: dict) -> Shape:
@@ -884,6 +960,8 @@ def shape_from_dict(payload: dict) -> Shape:
         return LineShape.from_dict(payload)
     if shape_type == "curve":
         return CurveShape.from_dict(payload)
+    if shape_type == "bezier":
+        return BezierShape.from_dict(payload)
     if shape_type == "text":
         return TextShape.from_dict(payload)
     if shape_type == "raster_image":
@@ -912,6 +990,8 @@ def shape_display_name(shape: "Shape") -> str:
         return "直线"
     if isinstance(shape, CurveShape):
         return "曲线"
+    if isinstance(shape, BezierShape):
+        return "Bezier"
     if isinstance(shape, RasterImageShape):
         return shape.source_name or "图片"
     return "图形"

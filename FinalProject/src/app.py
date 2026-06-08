@@ -11,11 +11,11 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from PIL import Image
 
-from algorithms.bezier import catmull_rom_polyline
+from algorithms.bezier import bezier_polyline, catmull_rom_polyline
 from core.components import ComponentLibrary, build_group_from_selection
 from core.document import Document
 from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
-from core.shapes import KIND_LABELS, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape, shape_display_name
+from core.shapes import KIND_LABELS, BezierShape, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape, shape_display_name
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
 from engine.canvas_renderer import CanvasRenderer
@@ -24,6 +24,7 @@ from engine.command import History
 from engine.guides import compute_guides
 from engine.physics import build_world, sync_to_document
 from engine.renderer import Renderer
+from engine.svg_renderer import SvgRenderer
 from engine.selection import apply_group_resize, apply_group_rotation, bounds_from_handle, handle_at, rotation_delta, selection_bounds, shapes_in_rect
 from engine.text_style import TEXT_SIZE_MAX, TEXT_SIZE_MIN, apply_text_style as apply_text_style_to_shapes, clamp_font_size
 from io_utils.serializer import load_document, save_document
@@ -49,6 +50,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "select": ToolSpec("选择", "V", "拖拽移动选中图形，或框选多个图形"),
     "line": ToolSpec("直线", "L", "拖拽绘制一条直线"),
     "curve": ToolSpec("画笔", "C", "按住并拖拽绘制平滑曲线"),
+    "bezier": ToolSpec("Bezier", "B", "左键添加或拖拽控制点，右键删除，Enter 完成任意阶 Bezier 曲线"),
     "eraser": ToolSpec("橡皮", "E", "拖拽经过图形、曲线或连接线即可擦除"),
     "text": ToolSpec("文本", "T", "点击画布添加文本，双击已有文本可编辑"),
     "connector": ToolSpec("连接", "K", "从一个图形拖拽到另一个图形以创建连接线"),
@@ -60,6 +62,7 @@ TOOL_ICONS: dict[str, str] = {
     "select": "▣",
     "line": "╱",
     "curve": "✎",
+    "bezier": "⌁",
     "eraser": "⌫",
     "text": "T",
     "connector": "⤢",
@@ -68,7 +71,7 @@ TOOL_ICONS: dict[str, str] = {
 
 TOOL_GROUPS: list[tuple[str, list[str]]] = [
     ("选择", ["select"]),
-    ("绘制", ["line", "curve", "eraser", "text"]),
+    ("绘制", ["line", "curve", "bezier", "eraser", "text"]),
     ("连接", ["connector"]),
     ("导出", ["region_export"]),
 ]
@@ -305,6 +308,8 @@ def _parse_metadata_text(text: str) -> dict[str, str]:
 def inspector_context_for(document: Document, selected_ids: set[str], current_tool: str) -> str:
     if current_tool == "curve" and not selected_ids:
         return "pen"
+    if current_tool == "bezier" and not selected_ids:
+        return "bezier_tool"
     if current_tool == "eraser" and not selected_ids:
         return "eraser_tool"
     if current_tool == "connector" and not selected_ids:
@@ -495,6 +500,8 @@ class VectorFlowApp(tk.Tk):
         self._space_pan_start: tuple[int, int] | None = None
         self._space_pan_origin: tuple[float, float] | None = None
         self._freehand_points: list[tuple[float, float]] = []
+        self._bezier_points: list[tuple[float, float]] = []
+        self._bezier_drag_index: int | None = None
         self.eraser_radius = tk.DoubleVar(value=10.0)
         self.eraser_mode = tk.StringVar(value="whole")  # whole=整体擦除, partial=部分擦除
         self._eraser_dirty = False
@@ -638,6 +645,7 @@ class VectorFlowApp(tk.Tk):
         file_menu.add_command(label="SQL -> ER...", command=self.open_sql_er_dialog)
         file_menu.add_separator()
         file_menu.add_command(label="导出 PNG...", accelerator="Ctrl+E", command=self.export_png)
+        file_menu.add_command(label="导出 SVG...", accelerator="Ctrl+Alt+E", command=self.export_svg)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.destroy)
         menu.add_cascade(label="文件", menu=file_menu)
@@ -1176,6 +1184,7 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-s>", lambda _e: self.save_document())
         self.bind("<Control-S>", lambda _e: self.save_document_as())
         self.bind("<Control-e>", lambda _e: self.export_png())
+        self.bind("<Control-Alt-e>", lambda _e: self.export_svg())
         self.bind("<Control-z>", lambda _e: self.undo())
         self.bind("<Control-c>", lambda _e: self.copy_selection())
         self.bind("<Control-v>", lambda _e: self.paste_selection())
@@ -1190,8 +1199,10 @@ class VectorFlowApp(tk.Tk):
         self.bind("<Control-bracketleft>", lambda _e: self.lower_layer())
         self.bind("<Control-braceright>", lambda _e: self.bring_to_front())
         self.bind("<Control-braceleft>", lambda _e: self.send_to_back())
-        for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("e", "eraser"), ("t", "text"), ("k", "connector")]:
+        for key, tool in [("v", "select"), ("l", "line"), ("c", "curve"), ("b", "bezier"), ("e", "eraser"), ("t", "text"), ("k", "connector")]:
             self.bind(key, lambda _e, t=tool: self.set_tool(t))
+        self.bind("<Return>", self.on_return_key)
+        self.bind("<BackSpace>", self.on_backspace_key)
         self.bind("<KeyPress-space>", self.on_space_down)
         self.bind("<KeyRelease-space>", self.on_space_up)
 
@@ -1311,6 +1322,8 @@ class VectorFlowApp(tk.Tk):
             child.destroy()
         if context == "pen":
             self._build_pen_inspector(frame)
+        elif context == "bezier_tool":
+            self._build_bezier_inspector(frame)
         elif context == "eraser_tool":
             self._build_eraser_inspector(frame)
         elif context == "connector_tool":
@@ -1369,6 +1382,7 @@ class VectorFlowApp(tk.Tk):
                         command=self._on_connector_animation_toggle).pack(anchor=tk.W, padx=12, pady=3)
         self._inspector_button(parent, "重置视图 100%", self.reset_view)
         self._inspector_button(parent, "导出 PNG", self.export_png, "Accent.TButton")
+        self._inspector_button(parent, "导出 SVG", self.export_svg, "Accent.TButton")
 
     def _build_pen_inspector(self, parent: tk.Widget) -> None:
         self._inspector_title(parent, "画笔", "仅作用于新绘制曲线")
@@ -1381,6 +1395,18 @@ class VectorFlowApp(tk.Tk):
         self._inspector_label(parent, "平滑度")
         ttk.Scale(parent, from_=1, to=5, variable=self.pen_smoothness,
                   orient=tk.HORIZONTAL).pack(fill=tk.X, padx=12, pady=3)
+
+    def _build_bezier_inspector(self, parent: tk.Widget) -> None:
+        self._inspector_title(parent, "Bezier", "左键添加/拖拽控制点，右键删除，Enter 完成")
+        ttk.Label(parent, text=f"控制点: {len(self._bezier_points)}", style="Group.TLabel").pack(anchor=tk.W, padx=12, pady=(2, 8))
+        self._inspector_button(parent, "完成曲线", self._commit_bezier_shape, "Accent.TButton")
+        self._inspector_button(parent, "清空控制点", self._cancel_bezier_drawing)
+        ttk.Button(parent, textvariable=self.pen_color, command=self._choose_pen_color).pack(fill=tk.X, padx=12, pady=3)
+        self._inspector_label(parent, "线宽")
+        ttk.Spinbox(parent, from_=1, to=12, textvariable=self.pen_width, width=8).pack(anchor=tk.W, padx=12, pady=3)
+        self._inspector_label(parent, "线型")
+        ttk.Combobox(parent, textvariable=self.pen_dash, values=list(DASH_PRESETS.keys()),
+                     state="readonly", width=18).pack(fill=tk.X, padx=12, pady=3)
 
     def _build_eraser_inspector(self, parent: tk.Widget) -> None:
         self._inspector_title(parent, "橡皮擦", "拖拽经过对象即可擦除")
@@ -1486,6 +1512,8 @@ class VectorFlowApp(tk.Tk):
         if self._freehand_points:
             self._freehand_points = []
             self.canvas.delete("preview")
+        if tool != "bezier" and self._bezier_points:
+            self._cancel_bezier_drawing(update=False)
         # 切到非曲线工具时自动收起画笔属性面板
         if tool != "curve":
             self._close_pen_panel()
@@ -2011,6 +2039,12 @@ class VectorFlowApp(tk.Tk):
             self._freehand_points = [self.drag_start]
             self.drag_mode = "curve_trace"
 
+        elif tool == "bezier":
+            if not self._start_bezier_drag(self.drag_start, tolerance=8 / self.zoom):
+                self._add_bezier_control_point(self.drag_start)
+            self.drag_start = None
+            self.drag_mode = "bezier_drag"
+
         elif tool == "eraser":
             self.drag_mode = "erase"
             self._eraser_dirty = False
@@ -2061,10 +2095,12 @@ class VectorFlowApp(tk.Tk):
         return True
 
     def on_left_drag(self, event) -> None:
-        if self.physics_running or self.drag_start is None:
+        if self.physics_running:
             return
         current = self.screen_to_world(event.x, event.y)
         tool = self.current_tool.get()
+        if self.drag_start is None and not (tool == "bezier" and self.drag_mode == "bezier_drag"):
+            return
 
         if tool == "select" and self.drag_mode == "move" and self.drag_shape_origin and self.selected_ids:
             dx = current[0] - self.drag_shape_origin[0]
@@ -2114,6 +2150,8 @@ class VectorFlowApp(tk.Tk):
             self.canvas.create_rectangle(x0, y0, x1, y1, outline="#5BA8FF", dash=(5, 3), width=2, tags="preview")
         elif tool == "eraser" and self.drag_mode == "erase":
             self._erase_at(*current)
+        elif tool == "bezier" and self.drag_mode == "bezier_drag":
+            self._drag_bezier_control_point(current)
         elif tool in {"line", "region_export", "curve"}:
             if tool == "curve":
                 last = self._freehand_points[-1] if self._freehand_points else self.drag_start
@@ -2136,7 +2174,14 @@ class VectorFlowApp(tk.Tk):
                 self.canvas.create_rectangle(x0, y0, x1, y1, outline="#5AFF8A", dash=(4, 3), width=2, tags="preview")
 
     def on_left_up(self, event) -> None:
-        if self.physics_running or self.drag_start is None:
+        if self.physics_running:
+            return
+        if self.current_tool.get() == "bezier" and self.drag_mode == "bezier_drag":
+            self._bezier_drag_index = None
+            self.drag_mode = None
+            self._render_bezier_preview()
+            return
+        if self.drag_start is None:
             return
         current = self.screen_to_world(event.x, event.y)
         tool = self.current_tool.get()
@@ -2235,6 +2280,9 @@ class VectorFlowApp(tk.Tk):
         if self.physics_running:
             return
         point = self.screen_to_world(event.x, event.y)
+        if self.current_tool.get() == "bezier" and self._bezier_points:
+            if self._delete_bezier_control_point(point, tolerance=8 / self.zoom):
+                return
         shape = self.document.shape_at(*point)
         if shape is not None and shape.id not in self.selected_ids:
             self.selected_ids = {shape.id}
@@ -2270,6 +2318,23 @@ class VectorFlowApp(tk.Tk):
             return
         if isinstance(shape, (FlowchartShape, TextShape)):
             self._open_inline_editor_for_shape(shape)
+
+    def on_return_key(self, event) -> str | None:
+        if self.current_tool.get() == "bezier":
+            self._commit_bezier_shape()
+            return "break"
+        return None
+
+    def on_backspace_key(self, event) -> str | None:
+        if self.current_tool.get() == "bezier" and self._bezier_points:
+            self._bezier_points.pop()
+            self._bezier_drag_index = None
+            self._status_hint = "已删除最后一个 Bezier 控制点"
+            self._render_bezier_preview()
+            self._rebuild_inspector(force=True)
+            self._update_status()
+            return "break"
+        return None
 
     def on_space_down(self, event) -> None:
         if not self._space_held:
@@ -2364,6 +2429,116 @@ class VectorFlowApp(tk.Tk):
         self.canvas.delete("preview")
         if len(flat) >= 4:
             self.canvas.create_line(*flat, fill="#5BFFCF", width=2, tags="preview")
+
+    def _add_bezier_control_point(self, point: tuple[float, float]) -> None:
+        self._bezier_points.append(point)
+        self._bezier_drag_index = len(self._bezier_points) - 1
+        self._status_hint = f"Bezier 控制点 {len(self._bezier_points)}"
+        self._render_bezier_preview()
+        self._rebuild_inspector(force=True)
+        self._update_status()
+
+    def _start_bezier_drag(self, point: tuple[float, float], tolerance: float = 8.0) -> bool:
+        index = self._nearest_bezier_control_point(point, tolerance)
+        if index is None:
+            return False
+        self._bezier_drag_index = index
+        self._status_hint = f"正在拖拽 P{index}"
+        self._render_bezier_preview()
+        self._update_status()
+        return True
+
+    def _drag_bezier_control_point(self, point: tuple[float, float]) -> bool:
+        if self._bezier_drag_index is None:
+            return False
+        if not (0 <= self._bezier_drag_index < len(self._bezier_points)):
+            self._bezier_drag_index = None
+            return False
+        self._bezier_points[self._bezier_drag_index] = point
+        self._render_bezier_preview()
+        self._rebuild_inspector(force=True)
+        return True
+
+    def _delete_bezier_control_point(self, point: tuple[float, float], tolerance: float = 8.0) -> bool:
+        index = self._nearest_bezier_control_point(point, tolerance)
+        if index is None:
+            return False
+        del self._bezier_points[index]
+        if self._bezier_drag_index == index:
+            self._bezier_drag_index = None
+        elif self._bezier_drag_index is not None and self._bezier_drag_index > index:
+            self._bezier_drag_index -= 1
+        self._status_hint = f"已删除 Bezier 控制点 P{index}"
+        self._render_bezier_preview()
+        self._rebuild_inspector(force=True)
+        self._update_status()
+        return True
+
+    def _commit_bezier_shape(self) -> None:
+        if len(self._bezier_points) < 2:
+            self._status_hint = "至少需要 2 个控制点"
+            self._update_status()
+            return
+        points = list(self._bezier_points)
+        self._bezier_points = []
+        self._bezier_drag_index = None
+        dash = DASH_PRESETS.get(self.pen_dash.get(), [])
+        style = ShapeStyle(
+            stroke=self.pen_color.get(),
+            fill=None,
+            stroke_width=self.pen_width.get(),
+            dash=dash,
+        )
+        shape = self.document.add_shape(BezierShape(points=points, style=style))
+        self.selected_ids = {shape.id}
+        self.canvas.delete("preview")
+        self._push_history()
+        self._status_hint = "Bezier 曲线已创建"
+        self.redraw()
+
+    def _cancel_bezier_drawing(self, *, update: bool = True) -> None:
+        self._bezier_points = []
+        self._bezier_drag_index = None
+        self.canvas.delete("preview")
+        self._status_hint = "已取消 Bezier 绘制"
+        if update:
+            self._rebuild_inspector(force=True)
+            self._update_status()
+
+    def _nearest_bezier_control_point(self, point: tuple[float, float], tolerance: float) -> int | None:
+        best_index: int | None = None
+        best_distance = tolerance
+        px, py = point
+        for index, (x, y) in enumerate(self._bezier_points):
+            distance = math.hypot(px - x, py - y)
+            if distance <= best_distance:
+                best_distance = distance
+                best_index = index
+        return best_index
+
+    def _render_bezier_preview(self) -> None:
+        self.canvas.delete("preview")
+        if not self._bezier_points:
+            return
+        flat_control: list[float] = []
+        for point in self._bezier_points:
+            sx, sy = self.world_to_screen(point)
+            flat_control.extend((sx, sy))
+        if len(flat_control) >= 4:
+            self.canvas.create_line(*flat_control, fill="#B8B8C8", dash=(5, 4), width=1, tags="preview")
+        if len(self._bezier_points) >= 2:
+            sampled = bezier_polyline(self._bezier_points)
+            flat_curve: list[float] = []
+            for px, py in sampled:
+                sx, sy = self.world_to_screen((px, py))
+                flat_curve.extend((sx, sy))
+            if len(flat_curve) >= 4:
+                self.canvas.create_line(*flat_curve, fill="#5BFFCF", width=2, tags="preview")
+        for index, point in enumerate(self._bezier_points):
+            sx, sy = self.world_to_screen(point)
+            color = "#FFA726" if index == self._bezier_drag_index else "#FFCF5A"
+            self.canvas.create_oval(sx - 4, sy - 4, sx + 4, sy + 4, outline=color, fill="#1E1E2E", width=2, tags="preview")
+            self.canvas.create_text(sx + 10, sy - 10, text=f"P{index}", fill="#FFCF5A", anchor=tk.W, tags="preview")
 
     def _snap_to_anchor(self, x: float, y: float, threshold: float = 16.0) -> tuple[float, float]:
         """Return the closest FlowchartShape anchor within threshold (world units), or (x, y) unchanged."""
@@ -2789,6 +2964,8 @@ class VectorFlowApp(tk.Tk):
             self._freehand_points = []
             self.canvas.delete("preview")
             self._status_hint = "已取消画笔绘制"
+        if self._bezier_points:
+            self._cancel_bezier_drawing(update=False)
         self.redraw()
 
     # ── Undo / Redo ─────────────────────────────────────────────────
@@ -2977,6 +3154,21 @@ class VectorFlowApp(tk.Tk):
             circuit_state=circuit_state,
         )
         image.save(path, format="PNG")
+        self._update_status(f"已导出: {path}")
+
+    def export_svg(self) -> None:
+        path = filedialog.asksaveasfilename(defaultextension=".svg", filetypes=[("SVG", "*.svg")])
+        if not path:
+            return
+        width = max(1, self.canvas.winfo_width())
+        height = max(1, self.canvas.winfo_height())
+        SvgRenderer(width, height).save(
+            self.document,
+            path,
+            self.zoom,
+            self.pan,
+            self.show_grid.get(),
+        )
         self._update_status(f"已导出: {path}")
 
     def reset_view(self) -> None:

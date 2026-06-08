@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 
-from algorithms.bezier import catmull_rom_polyline
+from algorithms.bezier import bezier_polyline, catmull_rom_polyline
 from core.document import Document
-from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
+from core.shapes import BezierShape, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, TextShape
 from engine.algorithm_replay import ReplayFrame
 from engine.selection import rotation_handle_point
 
@@ -137,6 +137,18 @@ class CanvasRenderer:
                 smooth=True,
                 tags=tags,
             )
+        elif isinstance(shape, BezierShape):
+            if len(shape.points) < 2:
+                return
+            points = bezier_polyline(shape.points)
+            self.canvas.create_line(
+                *self._flat(points, zoom, pan),
+                fill=shape.style.stroke,
+                width=self._stroke_width(shape.style.stroke_width, zoom),
+                dash=self._dash(shape.style.dash),
+                smooth=True,
+                tags=tags,
+            )
         elif isinstance(shape, TextShape):
             self._draw_text_shape(shape, zoom, pan, tags)
         elif isinstance(shape, RasterImageShape):
@@ -174,6 +186,18 @@ class CanvasRenderer:
                 if len(child.points) < 2:
                     continue
                 points = catmull_rom_polyline(child.points, steps_per_segment=10)
+                self.canvas.create_line(
+                    *self._flat(points, zoom, pan),
+                    fill=child.style.stroke,
+                    width=self._stroke_width(child.style.stroke_width, zoom),
+                    dash=self._dash(child.style.dash),
+                    smooth=True,
+                    tags=child_tags,
+                )
+            elif isinstance(child, BezierShape):
+                if len(child.points) < 2:
+                    continue
+                points = bezier_polyline(child.points)
                 self.canvas.create_line(
                     *self._flat(points, zoom, pan),
                     fill=child.style.stroke,
