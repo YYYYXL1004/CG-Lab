@@ -17,7 +17,9 @@ from core.components import ComponentLibrary, build_group_from_selection
 from core.document import Document
 from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
 from core.mindmap import (
+    DEFAULT_MINDMAP_TEMPLATE,
     MINDMAP_COLLAPSED,
+    MINDMAP_TEMPLATES,
     add_mindmap_child,
     build_mindmap_fragment,
     collapsed_hidden_ids,
@@ -42,6 +44,48 @@ from io_utils.serializer import load_document, save_document
 
 CANVAS_WIDTH = 980
 CANVAS_HEIGHT = 680
+FILE_MENU_ACTIONS = (
+    {"kind": "command", "label": "新建", "command": "new_document", "accelerator": "Ctrl+N"},
+    {"kind": "command", "label": "打开...", "command": "open_document", "accelerator": "Ctrl+O"},
+    {"kind": "command", "label": "保存", "command": "save_document", "accelerator": "Ctrl+S"},
+    {"kind": "command", "label": "另存为...", "command": "save_document_as", "accelerator": "Ctrl+Shift+S"},
+    {"kind": "separator"},
+    {"kind": "command", "label": "导入风景照片...", "command": "import_bitmap_photo"},
+    {"kind": "command", "label": "SQL -> ER...", "command": "open_sql_er_dialog"},
+    {"kind": "command", "label": "思维导图...", "command": "open_mindmap_dialog"},
+    {"kind": "separator"},
+    {"kind": "command", "label": "导出 PNG...", "command": "export_png", "accelerator": "Ctrl+E"},
+    {"kind": "command", "label": "导出 SVG...", "command": "export_svg", "accelerator": "Ctrl+Alt+E"},
+    {"kind": "separator"},
+    {"kind": "command", "label": "退出", "command": "destroy"},
+)
+
+COMMAND_BAR_GROUPS = (
+    {
+        "title": "编辑",
+        "items": (
+            {"label": "撤销", "command": "undo"},
+            {"label": "清屏", "command": "clear_canvas", "style": "Danger.TButton"},
+        ),
+    },
+    {
+        "title": "图表",
+        "items": (
+            {"label": "SQL -> ER", "command": "open_sql_er_dialog", "style": "Accent.TButton"},
+            {"label": "Mind Map", "command": "open_mindmap_dialog", "style": "Accent.TButton"},
+        ),
+    },
+    {
+        "title": "演示",
+        "items": (
+            {"label": "算法回放", "command": "play_algorithm_replay"},
+            {"label": "物理播放", "command": "toggle_physics", "textvariable": "physics_btn_label", "style": "Accent.TButton"},
+            {"label": "电路秀", "command": "load_circuit_template"},
+            {"label": "电路通电", "command": "toggle_circuit_power", "textvariable": "circuit_power_label", "style": "Accent.TButton"},
+            {"label": "电路开关", "command": "toggle_circuit_switch", "textvariable": "circuit_switch_label"},
+        ),
+    },
+)
 
 DASH_PRESETS = {"━━ 实线": [], "╌╌ 虚线": [10, 6], "⋯⋯ 点线": [3, 4], "━╌ 点划线": [10, 4, 3, 4]}
 ARROW_MAP = {"▶ 实心箭头": "arrow", "▷ 空心箭头": "open_arrow", "◆ 菱形": "diamond", "● 圆点": "dot", "  无": "none"}
@@ -108,6 +152,10 @@ REQUIRED_THEME_TOKENS: set[str] = {
     "separator",
     "border",
     "field_bg",
+    "combobox_bg",
+    "combobox_fg",
+    "combobox_select_bg",
+    "combobox_select_fg",
     "canvas_bg",
     "grid",
     "selection",
@@ -117,6 +165,11 @@ REQUIRED_THEME_TOKENS: set[str] = {
     "editor_fg",
     "editor_caret",
     "editor_highlight",
+    "text_editor_bg",
+    "text_editor_fg",
+    "text_editor_placeholder",
+    "text_editor_border",
+    "text_editor_focus",
     "sash_hover",
     "toggle_label",
 }
@@ -124,6 +177,67 @@ REQUIRED_THEME_TOKENS: set[str] = {
 
 def missing_theme_tokens(theme: dict[str, str]) -> list[str]:
     return sorted(REQUIRED_THEME_TOKENS.difference(theme.keys()))
+
+
+def combobox_style_options(theme: dict[str, str]) -> dict[str, Any]:
+    return {
+        "configure": {
+            "fieldbackground": theme["combobox_bg"],
+            "background": theme["combobox_bg"],
+            "foreground": theme["combobox_fg"],
+            "selectbackground": theme["combobox_bg"],
+            "selectforeground": theme["combobox_fg"],
+            "arrowcolor": theme["combobox_fg"],
+        },
+        "fieldbackground_map": [
+            ("readonly", theme["combobox_bg"]),
+            ("disabled", theme["button_bg"]),
+        ],
+        "background_map": [
+            ("readonly", theme["combobox_bg"]),
+            ("active", theme["button_hover"]),
+        ],
+        "foreground_map": [
+            ("readonly", theme["combobox_fg"]),
+            ("disabled", theme["caption"]),
+        ],
+        "selectbackground_map": [
+            ("readonly", theme["combobox_bg"]),
+            ("focus", theme["combobox_bg"]),
+        ],
+        "selectforeground_map": [
+            ("readonly", theme["combobox_fg"]),
+            ("focus", theme["combobox_fg"]),
+        ],
+        "option_db": {
+            "*TCombobox*Listbox.background": theme["combobox_bg"],
+            "*TCombobox*Listbox.foreground": theme["combobox_fg"],
+            "*TCombobox*Listbox.selectBackground": theme["combobox_select_bg"],
+            "*TCombobox*Listbox.selectForeground": theme["combobox_select_fg"],
+        },
+    }
+
+
+def modern_text_editor_options(theme: dict[str, str], font_size: int | float, text: str = "") -> dict[str, Any]:
+    clamped_size = int(clamp_font_size(font_size))
+    sizing_text = text if text else "输入文本"
+    lines = sizing_text.splitlines() or [sizing_text]
+    width_chars = max(12, min(52, max(len(line) for line in lines) + 4))
+    height_lines = max(2, min(10, len(lines) + 1))
+    return {
+        "background": theme["text_editor_bg"],
+        "foreground": theme["text_editor_fg"],
+        "placeholder": "输入文本",
+        "placeholder_foreground": theme["text_editor_placeholder"],
+        "insertbackground": theme["editor_caret"],
+        "highlightbackground": theme["text_editor_border"],
+        "highlightcolor": theme["text_editor_focus"],
+        "font": ("Microsoft YaHei", clamped_size),
+        "padx": 10,
+        "pady": 8,
+        "width": width_chars,
+        "height": height_lines,
+    }
 
 
 def split_polyline_by_circle(
@@ -402,6 +516,10 @@ THEMES: dict[str, dict[str, str]] = {
         "separator": "#414868",
         "border": "#343853",
         "field_bg": "#2A2D3F",
+        "combobox_bg": "#2A2D3F",
+        "combobox_fg": "#E5E7EB",
+        "combobox_select_bg": "#7AA2F7",
+        "combobox_select_fg": "#16161E",
         "canvas_bg": "#16161E",
         "grid": "#2A2A3E",
         "selection": "#5BA8FF",
@@ -411,6 +529,11 @@ THEMES: dict[str, dict[str, str]] = {
         "editor_fg": "#C0CAF5",
         "editor_caret": "#FFFFFF",
         "editor_highlight": "#5BA8FF",
+        "text_editor_bg": "#25283A",
+        "text_editor_fg": "#E5E7EB",
+        "text_editor_placeholder": "#7982A9",
+        "text_editor_border": "#414868",
+        "text_editor_focus": "#7AA2F7",
         "sash_hover": "#5BA8FF",
         "toggle_label": "☀ 浅色",
     },
@@ -435,6 +558,10 @@ THEMES: dict[str, dict[str, str]] = {
         "separator": "#D0D7DE",
         "border": "#D0D7DE",
         "field_bg": "#FFFFFF",
+        "combobox_bg": "#FFFFFF",
+        "combobox_fg": "#1F2328",
+        "combobox_select_bg": "#0969DA",
+        "combobox_select_fg": "#FFFFFF",
         "canvas_bg": "#FCFCFD",
         "grid": "#E5E7EB",
         "selection": "#0969DA",
@@ -444,6 +571,11 @@ THEMES: dict[str, dict[str, str]] = {
         "editor_fg": "#1F2328",
         "editor_caret": "#000000",
         "editor_highlight": "#0969DA",
+        "text_editor_bg": "#FFFFFF",
+        "text_editor_fg": "#1F2328",
+        "text_editor_placeholder": "#8C959F",
+        "text_editor_border": "#D0D7DE",
+        "text_editor_focus": "#0969DA",
         "sash_hover": "#0969DA",
         "toggle_label": "☾ 暗色",
     },
@@ -594,10 +726,13 @@ class VectorFlowApp(tk.Tk):
         self.document.background = th["canvas_bg"]
         # inline editor 如果开着也需要换色
         if self._inline_editor is not None and self._inline_editor.winfo_exists():
+            editor_options = modern_text_editor_options(th, self.text_size_var.get())
             self._inline_editor.configure(
-                bg=th["editor_bg"], fg=th["editor_fg"],
-                insertbackground=th["editor_caret"],
-                highlightbackground=th["editor_highlight"],
+                bg=editor_options["background"],
+                fg=editor_options["placeholder_foreground"] if getattr(self._inline_editor, "_placeholder_active", False) else editor_options["foreground"],
+                insertbackground=editor_options["insertbackground"],
+                highlightbackground=editor_options["highlightbackground"],
+                highlightcolor=editor_options["highlightcolor"],
             )
         # pen panel 颜色硬编码在创建时，关掉让用户重新打开即可
         self._close_pen_panel()
@@ -631,7 +766,18 @@ class VectorFlowApp(tk.Tk):
         style.configure("Danger.TButton", background=th["danger_bg"], foreground=th["danger_fg"],
                         padding=(10, 6), borderwidth=0, focusthickness=0)
         style.configure("TCheckbutton", background=th["panel_bg"], foreground=th["fg"])
-        style.configure("TCombobox", fieldbackground=th["field_bg"], foreground=th["fg"])
+        combo_style = combobox_style_options(th)
+        style.configure("TCombobox", **combo_style["configure"])
+        style.map(
+            "TCombobox",
+            fieldbackground=combo_style["fieldbackground_map"],
+            background=combo_style["background_map"],
+            foreground=combo_style["foreground_map"],
+            selectbackground=combo_style["selectbackground_map"],
+            selectforeground=combo_style["selectforeground_map"],
+        )
+        for option, value in combo_style["option_db"].items():
+            self.option_add(option, value)
         style.configure("TSpinbox", fieldbackground=th["field_bg"], foreground=th["fg"])
         style.configure("TSeparator", background=th["separator"])
         style.configure("Group.TLabel", background=th["panel_bg"], foreground=th["caption"],
@@ -665,19 +811,17 @@ class VectorFlowApp(tk.Tk):
     def _build_menu(self) -> None:
         menu = tk.Menu(self)
         file_menu = tk.Menu(menu, tearoff=False)
-        file_menu.add_command(label="新建", accelerator="Ctrl+N", command=self.new_document)
-        file_menu.add_command(label="打开...", accelerator="Ctrl+O", command=self.open_document)
-        file_menu.add_command(label="保存", accelerator="Ctrl+S", command=self.save_document)
-        file_menu.add_command(label="另存为...", accelerator="Ctrl+Shift+S", command=self.save_document_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="导入风景照片...", command=self.import_bitmap_photo)
-        file_menu.add_command(label="SQL -> ER...", command=self.open_sql_er_dialog)
-        file_menu.add_command(label="思维导图...", command=self.open_mindmap_dialog)
-        file_menu.add_separator()
-        file_menu.add_command(label="导出 PNG...", accelerator="Ctrl+E", command=self.export_png)
-        file_menu.add_command(label="导出 SVG...", accelerator="Ctrl+Alt+E", command=self.export_svg)
-        file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.destroy)
+        for action in FILE_MENU_ACTIONS:
+            if action["kind"] == "separator":
+                file_menu.add_separator()
+                continue
+            kwargs: dict[str, Any] = {
+                "label": action["label"],
+                "command": getattr(self, str(action["command"])),
+            }
+            if "accelerator" in action:
+                kwargs["accelerator"] = action["accelerator"]
+            file_menu.add_command(**kwargs)
         menu.add_cascade(label="文件", menu=file_menu)
 
         edit_menu = tk.Menu(menu, tearoff=False)
@@ -750,21 +894,18 @@ class VectorFlowApp(tk.Tk):
             return button
 
         # 文件/复制粘贴等常规操作都在顶部菜单里，这里只留高频与演示向的功能。
-        edit_group = _group("编辑")
-        self.undo_btn = _btn(edit_group, "撤销", command=self.undo)
-        _btn(edit_group, "清屏", command=self.clear_canvas, style="Danger.TButton")
-
-        chart_group = _group("图表")
-        _btn(chart_group, "SQL -> ER", command=self.open_sql_er_dialog, style="Accent.TButton")
-        _btn(chart_group, "Mind Map", command=self.open_mindmap_dialog, style="Accent.TButton")
-
-        demo_group = _group("演示")
-        _btn(demo_group, "算法回放", command=self.play_algorithm_replay)
-        _btn(demo_group, textvariable=self.physics_btn_label, command=self.toggle_physics, style="Accent.TButton")
-        _btn(demo_group, "电路秀", command=self.load_circuit_template)
-        _btn(demo_group, textvariable=self.circuit_power_label, command=self.toggle_circuit_power, style="Accent.TButton")
-        _btn(demo_group, textvariable=self.circuit_switch_label, command=self.toggle_circuit_switch)
-        _btn(demo_group, textvariable=self.circuit_fault_label, command=self.toggle_circuit_fault, style="Danger.TButton")
+        for group in COMMAND_BAR_GROUPS:
+            row = _group(str(group["title"]))
+            for item in group["items"]:
+                button = _btn(
+                    row,
+                    item["label"],
+                    command=getattr(self, str(item["command"])),
+                    style=str(item.get("style", "Tool.TButton")),
+                    textvariable=getattr(self, str(item["textvariable"])) if item.get("textvariable") else None,
+                )
+                if item["command"] == "undo":
+                    self.undo_btn = button
 
         view_group = _group("视图")
         _btn(view_group, textvariable=self.theme_btn_label, command=self.toggle_theme)
@@ -2753,11 +2894,18 @@ class VectorFlowApp(tk.Tk):
 
         th = self._theme()
         dlg.configure(bg=th["panel_bg"])
+        top = ttk.Frame(dlg, style="Panel.TFrame")
+        top.pack(side=tk.TOP, fill=tk.X, padx=12, pady=(12, 4))
+        ttk.Label(top, text="演示模板").pack(side=tk.LEFT, padx=(0, 8))
+        template_names = [template.name for template in MINDMAP_TEMPLATES]
+        template_var = tk.StringVar(value=DEFAULT_MINDMAP_TEMPLATE.name)
+        template_box = ttk.Combobox(top, textvariable=template_var, values=template_names, state="readonly", width=24)
+        template_box.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(
             dlg,
             text="使用标题层级生成：# 中心主题，## 分支，### 子节点",
             style="Group.TLabel",
-        ).pack(anchor=tk.W, padx=12, pady=(12, 4))
+        ).pack(anchor=tk.W, padx=12, pady=(4, 4))
         editor = tk.Text(
             dlg,
             height=14,
@@ -2771,7 +2919,14 @@ class VectorFlowApp(tk.Tk):
             undo=True,
         )
         editor.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
-        editor.insert("1.0", "# 中心主题\n## 分支一\n### 子节点\n## 分支二")
+
+        def load_template() -> None:
+            name = template_var.get()
+            template = next((item for item in MINDMAP_TEMPLATES if item.name == name), DEFAULT_MINDMAP_TEMPLATE)
+            editor.delete("1.0", tk.END)
+            editor.insert("1.0", template.content)
+
+        ttk.Button(top, text="加载模板", style="Tool.TButton", command=load_template).pack(side=tk.LEFT, padx=4)
         actions = ttk.Frame(dlg, style="Panel.TFrame")
         actions.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(6, 12))
         ttk.Button(
@@ -2781,7 +2936,11 @@ class VectorFlowApp(tk.Tk):
             command=lambda: self._create_mindmap_from_text(editor.get("1.0", tk.END), dlg),
         ).pack(side=tk.RIGHT, padx=4)
         ttk.Button(actions, text="取消", style="Tool.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        load_template()
         editor.focus_set()
+
+    def _create_default_mindmap_template(self) -> None:
+        self._create_mindmap_from_text(DEFAULT_MINDMAP_TEMPLATE.content, None)
 
     def _create_mindmap_from_text(self, content: str, dlg: tk.Toplevel | None = None) -> None:
         try:
@@ -2915,14 +3074,46 @@ class VectorFlowApp(tk.Tk):
         th = self._theme()
         editor_size = clamp_font_size(font_size if font_size is not None else self.text_size_var.get())
         editor_size = clamp_font_size(editor_size * self.zoom)
+        editor_options = modern_text_editor_options(th, editor_size, text)
         editor = tk.Text(
-            self.canvas, width=22, height=3, wrap=tk.WORD,
-            bg=th["editor_bg"], fg=th["editor_fg"], insertbackground=th["editor_caret"],
-            font=("Microsoft YaHei", editor_size), relief=tk.SOLID, bd=1,
-            highlightbackground=th["editor_highlight"], highlightthickness=2,
+            self.canvas,
+            width=editor_options["width"],
+            height=editor_options["height"],
+            wrap=tk.WORD,
+            bg=editor_options["background"],
+            fg=editor_options["foreground"],
+            insertbackground=editor_options["insertbackground"],
+            font=editor_options["font"],
+            relief=tk.FLAT,
+            bd=0,
+            padx=editor_options["padx"],
+            pady=editor_options["pady"],
+            highlightbackground=editor_options["highlightbackground"],
+            highlightcolor=editor_options["highlightcolor"],
+            highlightthickness=2,
         )
-        editor.insert("1.0", text)
+        editor._placeholder = editor_options["placeholder"]
+        editor._placeholder_active = False
+
+        def show_placeholder() -> None:
+            editor._placeholder_active = True
+            editor.configure(fg=editor_options["placeholder_foreground"])
+            editor.insert("1.0", editor._placeholder)
+
+        def hide_placeholder() -> None:
+            if not editor._placeholder_active:
+                return
+            editor.delete("1.0", tk.END)
+            editor.configure(fg=editor_options["foreground"])
+            editor._placeholder_active = False
+
+        if text:
+            editor.insert("1.0", text)
+        else:
+            show_placeholder()
         editor._world_pos = (wx, wy)
+        editor.bind("<FocusIn>", lambda _e: hide_placeholder())
+        editor.bind("<FocusOut>", lambda _e: self._commit_inline_editor())
         editor.bind("<Control-Return>", lambda _e: (self._commit_inline_editor(), "break")[1])
         editor.bind("<Escape>", lambda _e: self._cancel_inline_editor())
         self._inline_editor = editor
@@ -2970,7 +3161,7 @@ class VectorFlowApp(tk.Tk):
         editor = self._inline_editor
         if editor is None:
             return
-        text = editor.get("1.0", tk.END).rstrip("\n")
+        text = "" if getattr(editor, "_placeholder_active", False) else editor.get("1.0", tk.END).strip()
         wx, wy = editor._world_pos
         self._inline_editor = None
         self.canvas.delete("inline_editor")
@@ -2992,7 +3183,13 @@ class VectorFlowApp(tk.Tk):
                 bold=self.text_bold_var.get(),
                 font_size=clamp_font_size(self.text_size_var.get()),
             )
-            self.document.add_shape(TextShape(wx, wy, text, style=style))
+            new_shape = TextShape(wx, wy, text, style=style)
+            new_shape.width, new_shape.height = new_shape.auto_size()
+            self.document.add_shape(new_shape)
+            self.selected_ids = {new_shape.id}
+            self.current_tool.set("select")
+            self._update_tool_button_states()
+            self._rebuild_inspector(force=True)
         self._inline_edit_shape = None
         self._push_history()
         self.redraw()

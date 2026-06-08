@@ -81,6 +81,24 @@ class MindMapTests(unittest.TestCase):
         self.assertEqual([child.title for child in root.children], ["Research", "Build"])
         self.assertEqual(root.children[0].children[0].title, "Papers")
 
+    def test_mindmap_demo_templates_are_parseable(self):
+        from core.mindmap import DEFAULT_MINDMAP_TEMPLATE, MINDMAP_TEMPLATES, parse_heading_text
+
+        self.assertGreaterEqual(len(MINDMAP_TEMPLATES), 1)
+        self.assertIs(DEFAULT_MINDMAP_TEMPLATE, MINDMAP_TEMPLATES[0])
+        template_names = [template.name for template in MINDMAP_TEMPLATES]
+        self.assertIn("项目答辩思维导图", template_names)
+
+        for template in MINDMAP_TEMPLATES:
+            root = parse_heading_text(template.content)
+            self.assertEqual(root.level, 1)
+            self.assertGreaterEqual(len(root.children), 3)
+
+        default_root = parse_heading_text(DEFAULT_MINDMAP_TEMPLATE.content)
+        default_titles = [child.title for child in default_root.children]
+        self.assertIn("核心功能", default_titles)
+        self.assertIn("演示流程", default_titles)
+
     def test_parse_heading_text_rejects_missing_root_and_skipped_levels(self):
         from core.mindmap import MindMapParseError, parse_heading_text
 
@@ -206,6 +224,31 @@ class MindMapTests(unittest.TestCase):
         self.assertEqual(len(app.document.shapes), 2)
         self.assertEqual(len(app.document.connectors), 1)
         self.assertEqual(app.document.shapes[0].text, "Root")
+        self.assertEqual(app.selected_ids, {app.document.shapes[0].id})
+
+    def test_app_creates_default_mindmap_template(self):
+        from app import VectorFlowApp
+        from core.mindmap import DEFAULT_MINDMAP_TEMPLATE, parse_heading_text
+
+        app = VectorFlowApp.__new__(VectorFlowApp)
+        app.document = Document()
+        app.canvas = _Canvas()
+        app.zoom = 1.0
+        app.pan = (0.0, 0.0)
+        app.selected_ids = set()
+        app.current_tool = _Var("select")
+        app._mindmap_hidden_original_visibility = {}
+        app._push_history = lambda: None
+        app.redraw = lambda: None
+        app._update_tool_button_states = lambda: None
+        app._update_status = lambda _message=None: None
+
+        app._create_default_mindmap_template()
+
+        template_root = parse_heading_text(DEFAULT_MINDMAP_TEMPLATE.content)
+        self.assertGreaterEqual(len(app.document.shapes), 1 + len(template_root.children))
+        self.assertGreaterEqual(len(app.document.connectors), len(app.document.shapes) - 1)
+        self.assertEqual(app.document.shapes[0].text, template_root.title)
         self.assertEqual(app.selected_ids, {app.document.shapes[0].id})
 
     def test_app_history_snapshot_preserves_visibility_when_collapsed(self):

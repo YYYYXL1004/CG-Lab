@@ -21,6 +21,12 @@ class MindMapTreeNode:
     children: list["MindMapTreeNode"] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class MindMapTemplate:
+    name: str
+    content: str
+
+
 _HEADING_RE = re.compile(r"^(#+)\s*(.*)$")
 
 MINDMAP_ID = "mindmap_id"
@@ -28,6 +34,30 @@ MINDMAP_PARENT_ID = "mindmap_parent_id"
 MINDMAP_COLLAPSED = "mindmap_collapsed"
 MINDMAP_SIDE = "mindmap_side"
 MINDMAP_CHILD_ID = "mindmap_child_id"
+
+DEFAULT_MINDMAP_TEMPLATE = MindMapTemplate(
+    name="项目答辩思维导图",
+    content=(
+        "# VectorFlow 项目答辩\n"
+        "## 核心功能\n"
+        "### 矢量图元编辑\n"
+        "### 思维导图\n"
+        "### SQL 生成 ER 图\n"
+        "## 图形算法\n"
+        "### Bresenham 直线\n"
+        "### 中点圆和椭圆\n"
+        "### Bezier 曲线\n"
+        "## 交互体验\n"
+        "### 拖拽编辑\n"
+        "### 折叠展开\n"
+        "### 撤销保存\n"
+        "## 演示流程\n"
+        "### 导入模板\n"
+        "### 添加分支\n"
+        "### 导出成果"
+    ),
+)
+MINDMAP_TEMPLATES: tuple[MindMapTemplate, ...] = (DEFAULT_MINDMAP_TEMPLATE,)
 
 
 def parse_heading_text(text: str) -> MindMapTreeNode:

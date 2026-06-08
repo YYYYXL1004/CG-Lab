@@ -147,7 +147,10 @@ def apply_group_resize(
                 for p in original.points
             ]
         elif isinstance(shape, TextShape) and isinstance(original, TextShape):
-            shape.x, shape.y = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
+            ix1, iy1, ix2, iy2 = original.bounds()
+            tx1, ty1 = _map_point((ix1, iy1), (ox1, oy1), (nx1, ny1), sx, sy)
+            tx2, ty2 = _map_point((ix2, iy2), (ox1, oy1), (nx1, ny1), sx, sy)
+            shape.scale_from_bounds(original.bounds(), (tx1, ty1, tx2, ty2))
         elif isinstance(shape, RasterImageShape) and isinstance(original, RasterImageShape):
             left, top = _map_point((original.x, original.y), (ox1, oy1), (nx1, ny1), sx, sy)
             right, bottom = _map_point((original.x + original.width, original.y + original.height), (ox1, oy1), (nx1, ny1), sx, sy)

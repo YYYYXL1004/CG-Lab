@@ -669,6 +669,8 @@ class TextShape:
     y: float
     text: str
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None))
+    width: float | None = None
+    height: float | None = None
     id: str = field(default_factory=lambda: new_id("text"))
     z_order: int = 0
     visible: bool = True
@@ -680,17 +682,38 @@ class TextShape:
         self.y += dy
 
     def bounds(self) -> tuple[float, float, float, float]:
-        lines = self.text.split("\n") if self.text else [""]
-        width = max(24, max(len(line) for line in lines) * self.style.font_size * 0.6)
-        height = len(lines) * self.style.font_size * 1.5
+        width, height = self.size()
         return self.x, self.y, self.x + width, self.y + height
+
+    def size(self) -> tuple[float, float]:
+        auto_width, auto_height = self.auto_size()
+        width = self.width if self.width is not None else auto_width
+        height = self.height if self.height is not None else auto_height
+        return max(24.0, float(width)), max(float(self.style.font_size) * 1.5, float(height))
+
+    def auto_size(self) -> tuple[float, float]:
+        lines = self.text.split("\n") if self.text else [""]
+        width = max(24.0, 20.0 + max(len(line) for line in lines) * self.style.font_size * 0.6)
+        height = max(self.style.font_size * 1.8, len(lines) * self.style.font_size * 1.5 + 10.0)
+        return float(width), float(height)
+
+    def scale_from_bounds(
+        self,
+        _old_bounds: tuple[float, float, float, float],
+        new_bounds: tuple[float, float, float, float],
+    ) -> None:
+        x1, y1, x2, y2 = new_bounds
+        self.x = min(x1, x2)
+        self.y = min(y1, y2)
+        self.width = max(24.0, abs(x2 - x1))
+        self.height = max(float(self.style.font_size) * 1.5, abs(y2 - y1))
 
     def hit_test(self, x: float, y: float) -> bool:
         x1, y1, x2, y2 = self.bounds()
         return x1 <= x <= x2 and y1 <= y <= y2
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "id": self.id,
             "type": "text",
             "x": self.x,
@@ -700,6 +723,11 @@ class TextShape:
             "z_order": self.z_order,
             **_layer_dict(self),
         }
+        if self.width is not None:
+            payload["width"] = self.width
+        if self.height is not None:
+            payload["height"] = self.height
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict) -> "TextShape":
@@ -708,6 +736,8 @@ class TextShape:
             y=float(payload["y"]),
             text=payload.get("text", ""),
             style=ShapeStyle.from_dict(payload.get("style")),
+            width=float(payload["width"]) if payload.get("width") is not None else None,
+            height=float(payload["height"]) if payload.get("height") is not None else None,
             id=payload.get("id", new_id("text")),
             z_order=int(payload.get("z_order", 0)),
             **_layer_kwargs(payload),
@@ -924,7 +954,8 @@ class GroupShape:
         elif isinstance(child, BezierShape):
             child.points = [map_point(point) for point in child.points]
         elif isinstance(child, TextShape):
-            child.x, child.y = map_point((child.x, child.y))
+            cx1, cy1, cx2, cy2 = child.bounds()
+            child.scale_from_bounds(child.bounds(), (*map_point((cx1, cy1)), *map_point((cx2, cy2))))
         elif isinstance(child, RasterImageShape):
             left, top = map_point((child.x, child.y))
             right, bottom = map_point((child.x + child.width, child.y + child.height))

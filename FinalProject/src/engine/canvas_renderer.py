@@ -319,7 +319,9 @@ class CanvasRenderer:
         x1, y1, x2, y2 = shape.bounds()
         if shape.kind == "inductor":
             y1 = (y1 + y2) / 2
-        sx, sy = self._screen((x1 + x2) / 2, (y1 + y2) / 2, zoom, pan)
+        align = getattr(shape.style, "text_align", "center")
+        wx, anchor = self._aligned_text_position(x1, x2, align, zoom, vertical_anchor=False)
+        sx, sy = self._screen(wx, (y1 + y2) / 2, zoom, pan)
         self.canvas.create_text(
             sx,
             sy,
@@ -327,7 +329,8 @@ class CanvasRenderer:
             fill=shape.style.text_color,
             font=self._font(shape.style.font_size, shape.style.bold, zoom),
             width=max(20, (x2 - x1 - 8) * zoom),
-            justify=shape.style.text_align,
+            justify=align,
+            anchor=anchor,
             tags=tags,
         )
 
@@ -385,18 +388,36 @@ class CanvasRenderer:
 
     def _draw_text_shape(self, shape: TextShape, zoom: float, pan: tuple[float, float], tags: tuple[str, ...]) -> None:
         x1, y1, x2, _y2 = shape.bounds()
-        sx, sy = self._screen(x1, y1, zoom, pan)
+        align = getattr(shape.style, "text_align", "center")
+        wx, anchor = self._aligned_text_position(x1, x2, align, zoom, vertical_anchor=True)
+        sx, sy = self._screen(wx, y1, zoom, pan)
         self.canvas.create_text(
             sx,
             sy,
             text=shape.text,
             fill=shape.style.text_color,
             font=self._font(shape.style.font_size, shape.style.bold, zoom),
-            width=max(20, (x2 - x1) * zoom),
-            justify=shape.style.text_align,
-            anchor="nw",
+            width=max(20, (x2 - x1 - 8) * zoom),
+            justify=align,
+            anchor=anchor,
             tags=tags,
         )
+
+    @staticmethod
+    def _aligned_text_position(
+        x1: float,
+        x2: float,
+        align: str,
+        zoom: float,
+        *,
+        vertical_anchor: bool,
+    ) -> tuple[float, str]:
+        pad = 4 / max(zoom, 1e-6)
+        if align == "left":
+            return x1 + pad, "nw" if vertical_anchor else "w"
+        if align == "right":
+            return x2 - pad, "ne" if vertical_anchor else "e"
+        return (x1 + x2) / 2, "n" if vertical_anchor else "center"
 
     def _draw_raster_image_shape(
         self,

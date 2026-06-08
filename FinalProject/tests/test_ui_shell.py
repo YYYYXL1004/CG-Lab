@@ -5,6 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from app import (
+    COMMAND_BAR_GROUPS,
+    FILE_MENU_ACTIONS,
     REQUIRED_THEME_TOKENS,
     THEMES,
     can_group_selection,
@@ -12,20 +14,25 @@ from app import (
     TOOL_SPECS,
     bind_mousewheel_tree,
     clamp_drag_width,
+    combobox_style_options,
     connector_endpoint_hit,
     densify_polyline,
     flow_pick_hint,
     format_status_parts,
     inspector_context_for,
     missing_theme_tokens,
+    modern_text_editor_options,
     mousewheel_units,
     split_polyline_by_circle,
     tool_hint,
     update_connector_endpoint_anchor,
     viewport_center_world,
 )
+from app import VectorFlowApp
 from core.document import Document
+from core.style import ShapeStyle
 from core.shapes import ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, TextShape
+from engine.canvas_renderer import CanvasRenderer
 
 
 class UiShellTests(unittest.TestCase):
@@ -34,6 +41,180 @@ class UiShellTests(unittest.TestCase):
             with self.subTest(theme=name):
                 self.assertEqual(missing_theme_tokens(theme), [])
                 self.assertTrue(REQUIRED_THEME_TOKENS.issubset(theme.keys()))
+
+    def test_combobox_style_uses_readable_theme_colors(self):
+        for name, theme in THEMES.items():
+            with self.subTest(theme=name):
+                options = combobox_style_options(theme)
+
+                self.assertEqual(options["configure"]["fieldbackground"], theme["combobox_bg"])
+                self.assertEqual(options["configure"]["selectbackground"], theme["combobox_bg"])
+                self.assertEqual(options["configure"]["selectforeground"], theme["combobox_fg"])
+                self.assertIn(("readonly", theme["combobox_bg"]), options["background_map"])
+                self.assertIn(("readonly", theme["combobox_fg"]), options["foreground_map"])
+                self.assertEqual(options["option_db"]["*TCombobox*Listbox.background"], theme["combobox_bg"])
+                self.assertEqual(options["option_db"]["*TCombobox*Listbox.foreground"], theme["combobox_fg"])
+
+    def test_modern_text_editor_uses_theme_colors_and_placeholder(self):
+        for name, theme in THEMES.items():
+            with self.subTest(theme=name):
+                options = modern_text_editor_options(theme, 18)
+
+                self.assertEqual(options["placeholder"], "输入文本")
+                self.assertEqual(options["background"], theme["text_editor_bg"])
+                self.assertEqual(options["foreground"], theme["text_editor_fg"])
+                self.assertEqual(options["placeholder_foreground"], theme["text_editor_placeholder"])
+                self.assertEqual(options["highlightbackground"], theme["text_editor_border"])
+                self.assertEqual(options["highlightcolor"], theme["text_editor_focus"])
+                self.assertEqual(options["padx"], 10)
+                self.assertEqual(options["pady"], 8)
+
+    def test_modern_text_editor_sizes_to_existing_text(self):
+        theme = THEMES["dark"]
+        short = modern_text_editor_options(theme, 18, "短")
+        long = modern_text_editor_options(theme, 18, "这是一段明显更长的文本")
+        multi = modern_text_editor_options(theme, 18, "第一行\n第二行\n第三行")
+
+        self.assertGreater(long["width"], short["width"])
+        self.assertGreater(multi["height"], short["height"])
+
+    def test_canvas_renderer_applies_text_shape_alignment_to_anchor_and_position(self):
+        cases = [
+            ("left", 14.0, "nw"),
+            ("center", 70.0, "n"),
+            ("right", 126.0, "ne"),
+        ]
+
+        for align, expected_x, expected_anchor in cases:
+            with self.subTest(align=align):
+                canvas = _FakeCanvas()
+                document = Document()
+                document.add_shape(
+                    TextShape(
+                        10,
+                        20,
+                        "Label",
+                        width=120,
+                        height=40,
+                        style=ShapeStyle(text_align=align),
+                    )
+                )
+
+                CanvasRenderer(canvas).render(document, show_grid=False)
+
+                text_call = next(call for call in canvas.calls if call[0] == "create_text")
+                self.assertEqual(text_call[1][0], expected_x)
+                self.assertEqual(text_call[1][1], 20)
+                self.assertEqual(text_call[2]["anchor"], expected_anchor)
+                self.assertEqual(text_call[2]["justify"], align)
+
+    def test_canvas_renderer_applies_flowchart_text_alignment_to_anchor_and_position(self):
+        cases = [
+            ("left", 24.0, "w"),
+            ("center", 70.0, "center"),
+            ("right", 116.0, "e"),
+        ]
+
+        for align, expected_x, expected_anchor in cases:
+            with self.subTest(align=align):
+                canvas = _FakeCanvas()
+                document = Document()
+                document.add_shape(
+                    FlowchartShape(
+                        "process",
+                        20,
+                        30,
+                        100,
+                        50,
+                        "Step",
+                        ShapeStyle(text_align=align),
+                    )
+                )
+
+                CanvasRenderer(canvas).render(document, show_grid=False)
+
+                text_call = next(call for call in canvas.calls if call[0] == "create_text")
+                self.assertEqual(text_call[1][0], expected_x)
+                self.assertEqual(text_call[1][1], 55.0)
+                self.assertEqual(text_call[2]["anchor"], expected_anchor)
+                self.assertEqual(text_call[2]["justify"], align)
+
+    def test_theme_toggle_recolors_open_text_editor_with_modern_tokens(self):
+        app = VectorFlowApp.__new__(VectorFlowApp)
+        app.theme_name = "dark"
+        app._inline_editor = _FakeConfigurableEditor()
+        app.canvas = _FakeCanvas()
+        app._inspector_canvas = None
+        app._sash = _FakeConfigurableEditor()
+        app._tool_sash = _FakeConfigurableEditor()
+        app._layers_sash = _FakeConfigurableEditor()
+        app._lib_canvases = []
+        app.document = Document()
+        app.theme_btn_label = _Var("")
+        app.text_size_var = _Var(14)
+        app._configure_style = lambda: None
+        app._close_pen_panel = lambda: None
+        app._update_tool_button_states = lambda: None
+        app._rebuild_inspector = lambda force=False: None
+        app.redraw = lambda: None
+
+        app.toggle_theme()
+
+        light_options = modern_text_editor_options(THEMES["light"], 14)
+        self.assertEqual(app._inline_editor.config["bg"], light_options["background"])
+        self.assertEqual(app._inline_editor.config["fg"], light_options["foreground"])
+        self.assertEqual(app._inline_editor.config["highlightbackground"], light_options["highlightbackground"])
+        self.assertEqual(app._inline_editor.config["highlightcolor"], light_options["highlightcolor"])
+
+    def test_commit_new_text_selects_shape_and_returns_to_select_tool(self):
+        app = VectorFlowApp.__new__(VectorFlowApp)
+        app.document = Document()
+        app.selected_ids = set()
+        app.current_tool = _Var("text")
+        app.text_align_var = _Var("左对齐")
+        app.text_bold_var = _Var(True)
+        app.text_color_var = _Var("#FFCC00")
+        app.text_size_var = _Var(22)
+        app._inline_edit_shape = None
+        app._inline_editor = _FakeEditor("新文本", (120.0, 80.0))
+        app.canvas = _FakeCanvas()
+        app._push_history = lambda: None
+        app.redraw = lambda: None
+        app._update_tool_button_states = lambda: None
+        app._rebuild_inspector = lambda force=False: None
+
+        app._commit_inline_editor()
+
+        self.assertEqual(len(app.document.shapes), 1)
+        shape = app.document.shapes[0]
+        self.assertIsInstance(shape, TextShape)
+        self.assertEqual(shape.text, "新文本")
+        self.assertEqual(shape.style.text_align, "left")
+        self.assertTrue(shape.style.bold)
+        self.assertEqual(shape.style.text_color, "#FFCC00")
+        self.assertEqual(shape.style.font_size, 22)
+        self.assertEqual((shape.width, shape.height), TextShape(120.0, 80.0, "新文本", style=ShapeStyle(font_size=22)).auto_size())
+        self.assertEqual(app.selected_ids, {shape.id})
+        self.assertEqual(app.current_tool.get(), "select")
+
+    def test_commit_blank_new_text_does_not_create_shape(self):
+        app = VectorFlowApp.__new__(VectorFlowApp)
+        app.document = Document()
+        app.selected_ids = set()
+        app.current_tool = _Var("text")
+        app._inline_edit_shape = None
+        app._inline_editor = _FakeEditor("   \n", (120.0, 80.0))
+        app.canvas = _FakeCanvas()
+        app._push_history = lambda: None
+        app.redraw = lambda: None
+        app._update_tool_button_states = lambda: None
+        app._rebuild_inspector = lambda force=False: None
+
+        app._commit_inline_editor()
+
+        self.assertEqual(app.document.shapes, [])
+        self.assertEqual(app.selected_ids, set())
+        self.assertEqual(app.current_tool.get(), "text")
 
     def test_tool_specs_cover_expected_tool_rail(self):
         self.assertEqual(
@@ -46,6 +227,21 @@ class UiShellTests(unittest.TestCase):
         self.assertIn("拖拽", tool_hint("connector"))
         self.assertIn("擦除", tool_hint("eraser"))
         self.assertIn("区域", TOOL_SPECS["region_export"].label)
+
+    def test_menu_keeps_mindmap_template_inside_mindmap_dialog(self):
+        file_labels = [item["label"] for item in FILE_MENU_ACTIONS if item["kind"] == "command"]
+
+        self.assertEqual(file_labels.count("思维导图..."), 1)
+        self.assertNotIn("思维导图模板", file_labels)
+        self.assertLess(file_labels.index("SQL -> ER..."), file_labels.index("思维导图..."))
+
+    def test_command_bar_keeps_chart_and_demo_groups_compact(self):
+        groups = {group["title"]: [item["label"] for item in group["items"]] for group in COMMAND_BAR_GROUPS}
+
+        self.assertEqual(groups["图表"], ["SQL -> ER", "Mind Map"])
+        self.assertEqual(groups["演示"], ["算法回放", "物理播放", "电路秀", "电路通电", "电路开关"])
+        self.assertNotIn("思维模板", groups["图表"])
+        self.assertNotIn("模拟故障", groups["演示"])
 
     def test_inspector_context_tracks_tool_and_selection(self):
         document = Document()
@@ -203,6 +399,91 @@ class UiShellTests(unittest.TestCase):
                 (child, "<Button-5>"),
             },
         )
+
+
+class _Var:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+
+class _FakeEditor:
+    def __init__(self, text, world_pos):
+        self.text = text
+        self._world_pos = world_pos
+        self.destroyed = False
+
+    def get(self, *_args):
+        return self.text
+
+    def destroy(self):
+        self.destroyed = True
+
+
+class _FakeConfigurableEditor:
+    def __init__(self):
+        self.config = {}
+
+    def winfo_exists(self):
+        return True
+
+    def configure(self, **kwargs):
+        self.config.update(kwargs)
+
+
+class _FakeCanvas:
+    def __init__(self, width=500, height=360):
+        self.width = width
+        self.height = height
+        self.calls = []
+        self.deleted = []
+        self.lowered = []
+        self.config = {}
+
+    def winfo_width(self):
+        return self.width
+
+    def winfo_height(self):
+        return self.height
+
+    def delete(self, tag):
+        self.deleted.append(tag)
+        self.calls.append(("delete", (tag,), {}))
+
+    def configure(self, **kwargs):
+        self.config.update(kwargs)
+        self.calls.append(("configure", (), kwargs))
+
+    def tag_lower(self, tag):
+        self.lowered.append(tag)
+        self.calls.append(("tag_lower", (tag,), {}))
+
+    def create_line(self, *args, **kwargs):
+        return self._record("create_line", args, kwargs)
+
+    def create_polygon(self, *args, **kwargs):
+        return self._record("create_polygon", args, kwargs)
+
+    def create_oval(self, *args, **kwargs):
+        return self._record("create_oval", args, kwargs)
+
+    def create_rectangle(self, *args, **kwargs):
+        return self._record("create_rectangle", args, kwargs)
+
+    def create_text(self, *args, **kwargs):
+        return self._record("create_text", args, kwargs)
+
+    def create_image(self, *args, **kwargs):
+        return self._record("create_image", args, kwargs)
+
+    def _record(self, name, args, kwargs):
+        self.calls.append((name, args, kwargs))
+        return len(self.calls)
 
 
 if __name__ == "__main__":
