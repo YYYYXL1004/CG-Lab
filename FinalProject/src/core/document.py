@@ -219,12 +219,16 @@ class Document:
             old_to_new[shape.id] = clone.id
             pasted.append(self.add_shape(clone))
 
+        for clone in pasted:
+            _remap_mindmap_metadata(clone, old_to_new)
+
         for connector in self.connectors:
             if connector.start_shape_id in selected and connector.end_shape_id in selected:
                 clone = ConnectorShape.from_dict(connector.to_dict())
                 clone.id = new_id("conn")
                 clone.start_shape_id = old_to_new[connector.start_shape_id]
                 clone.end_shape_id = old_to_new[connector.end_shape_id]
+                _remap_connector_mindmap_metadata(clone, old_to_new)
                 self.add_connector(clone)
         return pasted
 
@@ -334,6 +338,27 @@ def _remap_group_shape_ids(group: GroupShape) -> None:
         connector.id = new_id("conn")
         connector.start_shape_id = old_to_new.get(connector.start_shape_id, connector.start_shape_id)
         connector.end_shape_id = old_to_new.get(connector.end_shape_id, connector.end_shape_id)
+
+
+def _remap_mindmap_metadata(shape: Shape, old_to_new: dict[str, str]) -> None:
+    metadata = getattr(shape, "metadata", None)
+    if not metadata:
+        return
+    parent_id = metadata.get("mindmap_parent_id")
+    if parent_id in old_to_new:
+        metadata["mindmap_parent_id"] = old_to_new[parent_id]
+
+
+def _remap_connector_mindmap_metadata(connector: ConnectorShape, old_to_new: dict[str, str]) -> None:
+    metadata = getattr(connector, "metadata", None)
+    if not metadata:
+        return
+    parent_id = metadata.get("mindmap_parent_id")
+    child_id = metadata.get("mindmap_child_id")
+    if parent_id in old_to_new:
+        metadata["mindmap_parent_id"] = old_to_new[parent_id]
+    if child_id in old_to_new:
+        metadata["mindmap_child_id"] = old_to_new[child_id]
 
 
 def _elbow_route(

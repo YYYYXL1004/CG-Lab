@@ -65,6 +65,7 @@ class FlowchartShape:
     visible: bool = True
     locked: bool = False
     name: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def center(self) -> Point:
         return Point(self.x + self.width / 2, self.y + self.height / 2)
@@ -399,6 +400,7 @@ class FlowchartShape:
             "rotation": self.rotation,
             "flip_x": self.flip_x,
             "flip_y": self.flip_y,
+            "metadata": dict(self.metadata),
             **_layer_dict(self),
         }
 
@@ -417,6 +419,7 @@ class FlowchartShape:
             rotation=float(payload.get("rotation", 0)),
             flip_x=bool(payload.get("flip_x", False)),
             flip_y=bool(payload.get("flip_y", False)),
+            metadata=dict(payload.get("metadata", {})),
             **_layer_kwargs(payload),
         )
 
@@ -972,6 +975,7 @@ class ConnectorShape:
     style: ShapeStyle = field(default_factory=lambda: ShapeStyle(fill=None, stroke="#A7C7FF"))
     id: str = field(default_factory=lambda: new_id("conn"))
     z_order: int = 10_000
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -986,6 +990,7 @@ class ConnectorShape:
             "arrow_start": self.arrow_start,
             "style": self.style.to_dict(),
             "z_order": self.z_order,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -1001,6 +1006,7 @@ class ConnectorShape:
             style=ShapeStyle.from_dict(payload.get("style")),
             id=payload.get("id", new_id("conn")),
             z_order=int(payload.get("z_order", 10_000)),
+            metadata=dict(payload.get("metadata", {})),
         )
 
 

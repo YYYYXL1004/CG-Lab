@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
+from typing import Any
 
 from PIL import Image
 
@@ -15,6 +16,15 @@ from algorithms.bezier import bezier_polyline, catmull_rom_polyline
 from core.components import ComponentLibrary, build_group_from_selection
 from core.document import Document
 from core.er_sql import ER_SQL_TEMPLATES, build_er_document, parse_create_table_sql
+from core.mindmap import (
+    MINDMAP_COLLAPSED,
+    add_mindmap_child,
+    build_mindmap_fragment,
+    collapsed_hidden_ids,
+    is_mindmap_node,
+    mindmap_children,
+    parse_heading_text,
+)
 from core.shapes import KIND_LABELS, BezierShape, ConnectorShape, CurveShape, FlowchartShape, GroupShape, LineShape, RasterImageShape, Shape, TextShape, shape_display_name
 from core.style import ShapeStyle
 from engine.algorithm_replay import ReplayFrame, ReplaySequence, build_shape_replay
@@ -509,6 +519,8 @@ class VectorFlowApp(tk.Tk):
         self._layers_inner: ttk.Frame | None = None
         self._layers_panel_key: tuple | None = None
         self._layers_rename_id: str | None = None
+        self._mindmap_control_items: dict[int, tuple[str, str]] = {}
+        self._mindmap_hidden_original_visibility: dict[str, bool] = {}
 
         self._inline_editor: tk.Text | None = None
         self._inline_edit_shape: TextShape | FlowchartShape | None = None
@@ -552,7 +564,7 @@ class VectorFlowApp(tk.Tk):
         self._seed_demo()
         # 同步文档背景到当前主题（新会话以暗色启动）
         self.document.background = self._theme()["canvas_bg"]
-        self.history.push(self.document.to_dict())
+        self.history.push(self._document_dict_for_history())
         self.redraw()
         self._schedule_connector_animation()
 
@@ -660,6 +672,7 @@ class VectorFlowApp(tk.Tk):
         file_menu.add_separator()
         file_menu.add_command(label="导入风景照片...", command=self.import_bitmap_photo)
         file_menu.add_command(label="SQL -> ER...", command=self.open_sql_er_dialog)
+        file_menu.add_command(label="思维导图...", command=self.open_mindmap_dialog)
         file_menu.add_separator()
         file_menu.add_command(label="导出 PNG...", accelerator="Ctrl+E", command=self.export_png)
         file_menu.add_command(label="导出 SVG...", accelerator="Ctrl+Alt+E", command=self.export_svg)
@@ -743,6 +756,7 @@ class VectorFlowApp(tk.Tk):
 
         chart_group = _group("图表")
         _btn(chart_group, "SQL -> ER", command=self.open_sql_er_dialog, style="Accent.TButton")
+        _btn(chart_group, "Mind Map", command=self.open_mindmap_dialog, style="Accent.TButton")
 
         demo_group = _group("演示")
         _btn(demo_group, "算法回放", command=self.play_algorithm_replay)
@@ -1095,6 +1109,7 @@ class VectorFlowApp(tk.Tk):
         if shape is None:
             return
         shape.visible = not getattr(shape, "visible", True)
+        self._mindmap_hidden_original_visibility[sid] = shape.visible
         if not shape.visible:
             self.selected_ids.discard(sid)
         self._push_history()
@@ -1254,7 +1269,7 @@ class VectorFlowApp(tk.Tk):
         self.document.background = self._theme()["canvas_bg"]
         self.file_path = None
         self.history = History()
-        self.history.push(self.document.to_dict())
+        self.history.push(self._document_dict_for_history())
         self.selected_ids.clear()
         self._guides = []
         self._circuit_powered = False
@@ -1753,6 +1768,7 @@ class VectorFlowApp(tk.Tk):
             self._pending_redraw_draft = False
         if self.canvas_renderer is None:
             self.canvas_renderer = CanvasRenderer(self.canvas)
+        self._apply_mindmap_visibility()
         th = self._theme()
         chrome = {
             "grid": th["grid"],
@@ -1777,11 +1793,82 @@ class VectorFlowApp(tk.Tk):
             replay_frame=self._replay_frame,
             circuit_state=circuit_state,
         )
+        self._draw_mindmap_controls()
         self.canvas.tag_raise("preview")
         self.canvas.tag_raise("inline_editor")
         self._rebuild_inspector()
         self._refresh_layers_panel()
         self._update_status()
+
+    def _apply_mindmap_visibility(self) -> None:
+        hidden_shapes, _hidden_connectors = collapsed_hidden_ids(self.document)
+        current_ids = {shape.id for shape in self.document.shapes}
+        for stale_id in set(self._mindmap_hidden_original_visibility) - current_ids:
+            self._mindmap_hidden_original_visibility.pop(stale_id, None)
+        for shape in self.document.shapes:
+            if shape.id not in self._mindmap_hidden_original_visibility:
+                self._mindmap_hidden_original_visibility[shape.id] = getattr(shape, "visible", True)
+            original_visible = self._mindmap_hidden_original_visibility.get(shape.id, True)
+            shape.visible = original_visible and shape.id not in hidden_shapes
+
+    def _draw_mindmap_controls(self) -> None:
+        self.canvas.delete("mindmap_control")
+        self._mindmap_control_items.clear()
+        for shape in self.document.shapes:
+            if (
+                not isinstance(shape, FlowchartShape)
+                or not getattr(shape, "visible", True)
+                or not is_mindmap_node(shape)
+                or shape.id not in self.selected_ids
+            ):
+                continue
+            side = str(shape.metadata.get("mindmap_side", "right"))
+            x1, y1, x2, y2 = shape.bounds()
+            add_x = (x1 - 18) if side == "left" else (x2 + 18)
+            add_y = (y1 + y2) / 2
+            self._create_mindmap_control(add_x, add_y, "+", "add", shape.id)
+            if mindmap_children(self.document, shape.id):
+                fold_x = (x2 + 18) if side == "left" else (x1 - 18)
+                collapsed = bool(shape.metadata.get(MINDMAP_COLLAPSED, False))
+                self._create_mindmap_control(fold_x, add_y, "+" if collapsed else "-", "toggle", shape.id)
+
+    def _create_mindmap_control(self, wx: float, wy: float, label: str, action: str, shape_id: str) -> None:
+        sx, sy = self.world_to_screen((wx, wy))
+        radius = 9
+        th = self._theme()
+        oval = self.canvas.create_oval(
+            sx - radius,
+            sy - radius,
+            sx + radius,
+            sy + radius,
+            fill=th["accent_bg"],
+            outline=th["accent_fg"],
+            width=1,
+            tags=("mindmap_control",),
+        )
+        text = self.canvas.create_text(
+            sx,
+            sy,
+            text=label,
+            fill=th["accent_fg"],
+            font=("Microsoft YaHei", 9, "bold"),
+            tags=("mindmap_control",),
+        )
+        self._mindmap_control_items[oval] = (action, shape_id)
+        self._mindmap_control_items[text] = (action, shape_id)
+
+    def _document_dict_for_history(self) -> dict[str, Any]:
+        payload = self.document.to_dict()
+        if not self._mindmap_hidden_original_visibility:
+            return payload
+        for shape_payload in payload.get("shapes", []):
+            shape_id = shape_payload.get("id")
+            if shape_id in self._mindmap_hidden_original_visibility:
+                shape_payload["visible"] = self._mindmap_hidden_original_visibility[shape_id]
+        return payload
+
+    def _document_for_save(self) -> Document:
+        return Document.from_dict(self._document_dict_for_history())
 
     def _on_connector_animation_toggle(self) -> None:
         if self.animate_connectors.get():
@@ -1879,7 +1966,7 @@ class VectorFlowApp(tk.Tk):
         # 停掉其它动画/回放，避免与物理循环抢重绘。
         self.stop_algorithm_replay(redraw=False)
         # 快照当前文档，停止时恢复，使物理模拟可逆且不污染原作品。
-        self._physics_snapshot = self.document.to_dict()
+        self._physics_snapshot = self._document_dict_for_history()
         self.selected_ids.clear()
         self._guides = []
         # 用当前可视区域作为容器，让所有图形落在屏幕内弹跳。
@@ -1992,6 +2079,48 @@ class VectorFlowApp(tk.Tk):
             outline=self._theme()["selection"], dash=(3, 2), tags="eraser_cursor",
         )
 
+    def _handle_mindmap_control_click(self, x: int, y: int) -> bool:
+        if not hasattr(self.canvas, "find_overlapping"):
+            return False
+        item_ids = self.canvas.find_overlapping(x - 3, y - 3, x + 3, y + 3)
+        for item_id in reversed(item_ids):
+            control = self._mindmap_control_items.get(item_id)
+            if not control:
+                continue
+            action, shape_id = control
+            if action == "add":
+                self._add_mindmap_child(shape_id)
+            elif action == "toggle":
+                self._toggle_mindmap_collapse(shape_id)
+            return True
+        return False
+
+    def _add_mindmap_child(self, shape_id: str) -> None:
+        try:
+            child = add_mindmap_child(self.document, shape_id)
+        except ValueError as exc:
+            self._update_status(str(exc))
+            return
+        self._mindmap_hidden_original_visibility[child.id] = True
+        self.selected_ids = {child.id}
+        self.current_tool.set("select")
+        self._push_history()
+        self.redraw()
+        self._update_status("已添加思维导图子节点")
+
+    def _toggle_mindmap_collapse(self, shape_id: str) -> None:
+        shape = self.document.find_shape(shape_id)
+        if not isinstance(shape, FlowchartShape) or not is_mindmap_node(shape):
+            return
+        if not mindmap_children(self.document, shape.id):
+            return
+        shape.metadata[MINDMAP_COLLAPSED] = not bool(shape.metadata.get(MINDMAP_COLLAPSED, False))
+        hidden_shapes, _hidden_connectors = collapsed_hidden_ids(self.document)
+        self.selected_ids.difference_update(hidden_shapes)
+        self._push_history()
+        self.redraw()
+        self._update_status("已折叠思维导图分支" if shape.metadata[MINDMAP_COLLAPSED] else "已展开思维导图分支")
+
     def on_left_down(self, event) -> None:
         if self.physics_running:
             return
@@ -1999,6 +2128,8 @@ class VectorFlowApp(tk.Tk):
             self._commit_inline_editor()
             return
         self.stop_algorithm_replay(redraw=False)
+        if self._handle_mindmap_control_click(event.x, event.y):
+            return
         if self._space_held:
             self._space_pan_start = (event.x, event.y)
             self._space_pan_origin = self.pan
@@ -2613,6 +2744,71 @@ class VectorFlowApp(tk.Tk):
 
     # ── Inline text editor ──────────────────────────────────────────
 
+    def open_mindmap_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("思维导图")
+        dlg.geometry("560x430")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        th = self._theme()
+        dlg.configure(bg=th["panel_bg"])
+        ttk.Label(
+            dlg,
+            text="使用标题层级生成：# 中心主题，## 分支，### 子节点",
+            style="Group.TLabel",
+        ).pack(anchor=tk.W, padx=12, pady=(12, 4))
+        editor = tk.Text(
+            dlg,
+            height=14,
+            wrap=tk.WORD,
+            bg=th["editor_bg"],
+            fg=th["editor_fg"],
+            insertbackground=th["editor_caret"],
+            font=("Consolas", 11),
+            relief=tk.SOLID,
+            bd=1,
+            undo=True,
+        )
+        editor.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        editor.insert("1.0", "# 中心主题\n## 分支一\n### 子节点\n## 分支二")
+        actions = ttk.Frame(dlg, style="Panel.TFrame")
+        actions.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(6, 12))
+        ttk.Button(
+            actions,
+            text="生成思维导图",
+            style="Accent.TButton",
+            command=lambda: self._create_mindmap_from_text(editor.get("1.0", tk.END), dlg),
+        ).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(actions, text="取消", style="Tool.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        editor.focus_set()
+
+    def _create_mindmap_from_text(self, content: str, dlg: tk.Toplevel | None = None) -> None:
+        try:
+            tree = parse_heading_text(content)
+        except ValueError as exc:
+            messagebox.showerror("思维导图解析失败", str(exc), parent=dlg or self)
+            return
+        center = viewport_center_world(
+            canvas_width=max(1, self.canvas.winfo_width()),
+            canvas_height=max(1, self.canvas.winfo_height()),
+            zoom=self.zoom,
+            pan=self.pan,
+        )
+        nodes, connectors = build_mindmap_fragment(tree, center=center)
+        for node in nodes:
+            self.document.add_shape(node)
+        for connector in connectors:
+            self.document.add_connector(connector)
+        self.selected_ids = {nodes[0].id} if nodes else set()
+        self.current_tool.set("select")
+        self._push_history()
+        self.redraw()
+        self._update_tool_button_states()
+        if dlg is not None:
+            dlg.destroy()
+        self._update_status(f"已生成思维导图：{len(nodes)} 个节点")
+
     def open_sql_er_dialog(self) -> None:
         dlg = tk.Toplevel(self)
         dlg.title("SQL -> ER 图")
@@ -2670,7 +2866,7 @@ class VectorFlowApp(tk.Tk):
             except ValueError as exc:
                 messagebox.showerror("SQL 解析失败", str(exc), parent=dlg)
                 return
-            previous_state = self.document.to_dict()
+            previous_state = self._document_dict_for_history()
             self.document = build_er_document(schema)
             self.document.background = self._theme()["canvas_bg"]
             self.file_path = None
@@ -2680,7 +2876,7 @@ class VectorFlowApp(tk.Tk):
             self.pan = (40.0, 40.0)
             self.history = History()
             self.history.push(previous_state)
-            self.history.push(self.document.to_dict())
+            self.history.push(self._document_dict_for_history())
             self.redraw()
             self._update_tool_button_states()
             self._update_status(f"已从 SQL 生成 ER 图：{len(schema.tables)} 张表，{len(self.document.connectors)} 条外键连线")
@@ -2992,6 +3188,8 @@ class VectorFlowApp(tk.Tk):
         if not self.clipboard_ids:
             return
         pasted = self.document.copy_paste(self.clipboard_ids, (30, 30))
+        for shape in pasted:
+            self._mindmap_hidden_original_visibility[shape.id] = getattr(shape, "visible", True)
         self.selected_ids = {s.id for s in pasted}
         self.clipboard_ids = list(self.selected_ids)
         self._push_history()
@@ -3055,7 +3253,10 @@ class VectorFlowApp(tk.Tk):
     def delete_selection(self) -> None:
         if not self.selected_ids:
             return
+        deleted_ids = set(self.selected_ids)
         self.document.delete_shapes(list(self.selected_ids))
+        for sid in deleted_ids:
+            self._mindmap_hidden_original_visibility.pop(sid, None)
         self.selected_ids.clear()
         self._push_history()
         self.redraw()
@@ -3076,11 +3277,14 @@ class VectorFlowApp(tk.Tk):
     # ── Undo / Redo ─────────────────────────────────────────────────
 
     def _push_history(self) -> None:
-        self.history.push(self.document.to_dict())
+        self.history.push(self._document_dict_for_history())
 
     def undo(self) -> None:
         if self.history.undo(self.document):
             self.selected_ids.clear()
+            self._mindmap_hidden_original_visibility = {
+                shape.id: getattr(shape, "visible", True) for shape in self.document.shapes
+            }
             self.redraw()
             self._update_status("已撤销")
         else:
@@ -3093,6 +3297,7 @@ class VectorFlowApp(tk.Tk):
         self.document.shapes.clear()
         self.document.connectors.clear()
         self.selected_ids.clear()
+        self._mindmap_hidden_original_visibility.clear()
         self._push_history()
         self.redraw()
         self._update_status("已清屏")
@@ -3173,9 +3378,10 @@ class VectorFlowApp(tk.Tk):
         self._clear_circuit_demo_state()
         self.document = Document()
         self.history = History()
-        self.history.push(self.document.to_dict())
+        self.history.push(self._document_dict_for_history())
         self.file_path = None
         self.selected_ids.clear()
+        self._mindmap_hidden_original_visibility.clear()
         self.redraw()
 
     def open_document(self) -> None:
@@ -3185,16 +3391,19 @@ class VectorFlowApp(tk.Tk):
         self._clear_circuit_demo_state()
         self.document = load_document(path)
         self.history = History()
-        self.history.push(self.document.to_dict())
+        self.history.push(self._document_dict_for_history())
         self.file_path = Path(path)
         self.selected_ids.clear()
+        self._mindmap_hidden_original_visibility = {
+            shape.id: getattr(shape, "visible", True) for shape in self.document.shapes
+        }
         self.redraw()
 
     def save_document(self) -> None:
         if self.file_path is None:
             self.save_document_as()
             return
-        save_document(self.document, self.file_path)
+        save_document(self._document_for_save(), self.file_path)
         self._update_status(f"已保存: {self.file_path}")
 
     def save_document_as(self) -> None:
